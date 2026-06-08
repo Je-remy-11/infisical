@@ -1,0 +1,121 @@
+package calculator
+
+import (
+	"errors"
+	"fmt"
+)
+
+// TaxType 定义税种枚举
+type TaxType string
+
+const (
+	TaxTypeIncome    TaxType = "INCOME"
+	TaxTypeVAT       TaxType = "VAT"
+	TaxTypeCorporate TaxType = "CORPORATE"
+	TaxTypeSales     TaxType = "SALES"
+)
+
+// TaxStrategy 定义税收计算策略接口
+type TaxStrategy interface {
+	Calculate(amount float64) (float64, error)
+}
+
+// IncomeTaxStrategy 个人所得税策略
+type IncomeTaxStrategy struct{}
+
+func (s *IncomeTaxStrategy) Calculate(amount float64) (float64, error) {
+	if amount < 0 {
+		return 0, errors.New("amount cannot be negative")
+	}
+	// 简单的阶梯税率示例
+	if amount <= 5000 {
+		return 0, nil
+	} else if amount <= 8000 {
+		return (amount - 5000) * 0.03, nil
+	} else if amount <= 17000 {
+		return 3000*0.03 + (amount-8000)*0.1, nil
+	}
+	return 3000*0.03 + 9000*0.1 + (amount-17000)*0.2, nil
+}
+
+// VATStrategy 增值税策略
+type VATStrategy struct{}
+
+func (s *VATStrategy) Calculate(amount float64) (float64, error) {
+	if amount < 0 {
+		return 0, errors.New("amount cannot be negative")
+	}
+	// 增值税率示例，例如 13%
+	return amount * 0.13, nil
+}
+
+// CorporateTaxStrategy 企业所得税策略
+type CorporateTaxStrategy struct{}
+
+func (s *CorporateTaxStrategy) Calculate(amount float64) (float64, error) {
+	if amount < 0 {
+		return 0, errors.New("amount cannot be negative")
+	}
+	// 企业所得税示例，例如 25%
+	return amount * 0.25, nil
+}
+
+// SalesTaxStrategy 销售税策略
+type SalesTaxStrategy struct{}
+
+func (s *SalesTaxStrategy) Calculate(amount float64) (float64, error) {
+	if amount < 0 {
+		return 0, errors.New("amount cannot be negative")
+	}
+	// 销售税示例，例如 5%
+	return amount * 0.05, nil
+}
+
+// TaxStrategyFactory 策略工厂，负责实例化具体的策略
+type TaxStrategyFactory struct {
+	strategies map[TaxType]TaxStrategy
+}
+
+// NewTaxStrategyFactory 创建并初始化策略工厂
+func NewTaxStrategyFactory() *TaxStrategyFactory {
+	return &TaxStrategyFactory{
+		strategies: map[TaxType]TaxStrategy{
+			TaxTypeIncome:    &IncomeTaxStrategy{},
+			TaxTypeVAT:       &VATStrategy{},
+			TaxTypeCorporate: &CorporateTaxStrategy{},
+			TaxTypeSales:     &SalesTaxStrategy{},
+		},
+	}
+}
+
+// GetStrategy 根据税种获取对应的计算策略
+func (f *TaxStrategyFactory) GetStrategy(taxType TaxType) (TaxStrategy, error) {
+	strategy, exists := f.strategies[taxType]
+	if !exists {
+		return nil, fmt.Errorf("unsupported tax type: %s", taxType)
+	}
+	return strategy, nil
+}
+
+// RegisterStrategy 允许在运行时动态注册新的税收策略（增强扩展性）
+func (f *TaxStrategyFactory) RegisterStrategy(taxType TaxType, strategy TaxStrategy) {
+	f.strategies[taxType] = strategy
+}
+
+// ----------------------------------------------------------------------------
+// 重写的主函数
+// ----------------------------------------------------------------------------
+
+// CalculateTax 优化后的税收计算主函数
+// 使用工厂模式获取策略，消除冗长的 if-else 和深层嵌套，降低圈复杂度
+func CalculateTax(taxType TaxType, amount float64) (float64, error) {
+	// 在实际应用中，工厂实例可以作为单例或通过依赖注入传入，这里为了简明直接实例化
+	factory := NewTaxStrategyFactory()
+
+	strategy, err := factory.GetStrategy(taxType)
+	if err != nil {
+		return 0, err
+	}
+
+	return strategy.Calculate(amount)
+}
