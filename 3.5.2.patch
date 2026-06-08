@@ -1,0 +1,532 @@
+diff --git a/order-system/.gitkeep b/order-system/.gitkeep
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/order-system/pom.xml b/order-system/pom.xml
+new file mode 100644
+index 0000000000..1f53c34d77
+--- /dev/null
++++ b/order-system/pom.xml
+@@ -0,0 +1,65 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project xmlns="http://maven.apache.org/POM/4.0.0"
++         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
++    <modelVersion>4.0.0</modelVersion>
++
++    <parent>
++        <groupId>org.springframework.boot</groupId>
++        <artifactId>spring-boot-starter-parent</artifactId>
++        <version>3.3.5</version>
++        <relativePath/>
++    </parent>
++
++    <groupId>com.infisical</groupId>
++    <artifactId>order-system</artifactId>
++    <version>0.0.1-SNAPSHOT</version>
++    <name>order-system</name>
++    <description>Order system with timeout cancellation</description>
++
++    <properties>
++        <java.version>17</java.version>
++    </properties>
++
++    <dependencies>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-data-jpa</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.retry</groupId>
++            <artifactId>spring-retry</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework</groupId>
++            <artifactId>spring-aspects</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.flywaydb</groupId>
++            <artifactId>flyway-core</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>com.h2database</groupId>
++            <artifactId>h2</artifactId>
++            <scope>runtime</scope>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-test</artifactId>
++            <scope>test</scope>
++        </dependency>
++    </dependencies>
++
++    <build>
++        <plugins>
++            <plugin>
++                <groupId>org.springframework.boot</groupId>
++                <artifactId>spring-boot-maven-plugin</artifactId>
++            </plugin>
++        </plugins>
++    </build>
++</project>
+diff --git a/order-system/src/main/java/com/infisical/ordersystem/OrderSystemApplication.java b/order-system/src/main/java/com/infisical/ordersystem/OrderSystemApplication.java
+new file mode 100644
+index 0000000000..dd3b5ab959
+--- /dev/null
++++ b/order-system/src/main/java/com/infisical/ordersystem/OrderSystemApplication.java
+@@ -0,0 +1,16 @@
++package com.infisical.ordersystem;
++
++import org.springframework.boot.SpringApplication;
++import org.springframework.boot.autoconfigure.SpringBootApplication;
++import org.springframework.retry.annotation.EnableRetry;
++import org.springframework.scheduling.annotation.EnableScheduling;
++
++@SpringBootApplication
++@EnableScheduling
++@EnableRetry
++public class OrderSystemApplication {
++
++    public static void main(String[] args) {
++        SpringApplication.run(OrderSystemApplication.class, args);
++    }
++}
+diff --git a/order-system/src/main/java/com/infisical/ordersystem/order/Order.java b/order-system/src/main/java/com/infisical/ordersystem/order/Order.java
+new file mode 100644
+index 0000000000..fe3ff96fab
+--- /dev/null
++++ b/order-system/src/main/java/com/infisical/ordersystem/order/Order.java
+@@ -0,0 +1,137 @@
++package com.infisical.ordersystem.order;
++
++import jakarta.persistence.Column;
++import jakarta.persistence.Entity;
++import jakarta.persistence.EnumType;
++import jakarta.persistence.Enumerated;
++import jakarta.persistence.GeneratedValue;
++import jakarta.persistence.GenerationType;
++import jakarta.persistence.Id;
++import jakarta.persistence.Index;
++import jakarta.persistence.PrePersist;
++import jakarta.persistence.PreUpdate;
++import jakarta.persistence.Table;
++
++import java.time.Duration;
++import java.time.Instant;
++
++@Entity
++@Table(
++        name = "orders",
++        indexes = {
++                @Index(name = "idx_orders_status_timeout_at", columnList = "status, timeout_at")
++        }
++)
++public class Order {
++
++    private static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(30);
++
++    @Id
++    @GeneratedValue(strategy = GenerationType.IDENTITY)
++    private Long id;
++
++    @Column(name = "order_no", nullable = false, unique = true, length = 64)
++    private String orderNo;
++
++    @Enumerated(EnumType.STRING)
++    @Column(nullable = false, length = 32)
++    private OrderStatus status = OrderStatus.PENDING;
++
++    @Column(name = "timeout_at", nullable = false)
++    private Instant timeoutAt;
++
++    @Column(name = "cancelled_at")
++    private Instant cancelledAt;
++
++    @Column(name = "created_at", nullable = false, updatable = false)
++    private Instant createdAt;
++
++    @Column(name = "updated_at", nullable = false)
++    private Instant updatedAt;
++
++    protected Order() {
++    }
++
++    public Order(String orderNo) {
++        this.orderNo = orderNo;
++        this.status = OrderStatus.PENDING;
++    }
++
++    @PrePersist
++    void prePersist() {
++        Instant now = createdAt != null ? createdAt : Instant.now();
++        if (status == null) {
++            status = OrderStatus.PENDING;
++        }
++        if (createdAt == null) {
++            createdAt = now;
++        }
++        if (updatedAt == null) {
++            updatedAt = now;
++        }
++        if (timeoutAt == null) {
++            timeoutAt = createdAt.plus(DEFAULT_TIMEOUT);
++        }
++    }
++
++    @PreUpdate
++    void preUpdate() {
++        updatedAt = Instant.now();
++    }
++
++    public Long getId() {
++        return id;
++    }
++
++    public void setId(Long id) {
++        this.id = id;
++    }
++
++    public String getOrderNo() {
++        return orderNo;
++    }
++
++    public void setOrderNo(String orderNo) {
++        this.orderNo = orderNo;
++    }
++
++    public OrderStatus getStatus() {
++        return status;
++    }
++
++    public void setStatus(OrderStatus status) {
++        this.status = status;
++    }
++
++    public Instant getTimeoutAt() {
++        return timeoutAt;
++    }
++
++    public void setTimeoutAt(Instant timeoutAt) {
++        this.timeoutAt = timeoutAt;
++    }
++
++    public Instant getCancelledAt() {
++        return cancelledAt;
++    }
++
++    public void setCancelledAt(Instant cancelledAt) {
++        this.cancelledAt = cancelledAt;
++    }
++
++    public Instant getCreatedAt() {
++        return createdAt;
++    }
++
++    public void setCreatedAt(Instant createdAt) {
++        this.createdAt = createdAt;
++    }
++
++    public Instant getUpdatedAt() {
++        return updatedAt;
++    }
++
++    public void setUpdatedAt(Instant updatedAt) {
++        this.updatedAt = updatedAt;
++    }
++}
+diff --git a/order-system/src/main/java/com/infisical/ordersystem/order/OrderRepository.java b/order-system/src/main/java/com/infisical/ordersystem/order/OrderRepository.java
+new file mode 100644
+index 0000000000..9386ee15aa
+--- /dev/null
++++ b/order-system/src/main/java/com/infisical/ordersystem/order/OrderRepository.java
+@@ -0,0 +1,39 @@
++package com.infisical.ordersystem.order;
++
++import org.springframework.data.domain.Pageable;
++import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.jpa.repository.Modifying;
++import org.springframework.data.jpa.repository.Query;
++import org.springframework.data.repository.query.Param;
++
++import java.time.Instant;
++import java.util.List;
++
++public interface OrderRepository extends JpaRepository<Order, Long> {
++
++    @Query("""
++            select o
++            from Order o
++            where o.status = :status
++              and o.timeoutAt <= :now
++            order by o.timeoutAt asc
++            """)
++    List<Order> findTimedOutPendingOrders(@Param("status") OrderStatus status,
++                                          @Param("now") Instant now,
++                                          Pageable pageable);
++
++    @Modifying(clearAutomatically = true, flushAutomatically = true)
++    @Query("""
++            update Order o
++               set o.status = :cancelledStatus,
++                   o.cancelledAt = :now,
++                   o.updatedAt = :now
++             where o.id = :orderId
++               and o.status = :pendingStatus
++               and o.timeoutAt <= :now
++            """)
++    int cancelTimedOutOrder(@Param("orderId") Long orderId,
++                            @Param("pendingStatus") OrderStatus pendingStatus,
++                            @Param("cancelledStatus") OrderStatus cancelledStatus,
++                            @Param("now") Instant now);
++}
+diff --git a/order-system/src/main/java/com/infisical/ordersystem/order/OrderStatus.java b/order-system/src/main/java/com/infisical/ordersystem/order/OrderStatus.java
+new file mode 100644
+index 0000000000..bae0ffbcbe
+--- /dev/null
++++ b/order-system/src/main/java/com/infisical/ordersystem/order/OrderStatus.java
+@@ -0,0 +1,8 @@
++package com.infisical.ordersystem.order;
++
++public enum OrderStatus {
++    PENDING,
++    PAID,
++    COMPLETED,
++    CANCELLED
++}
+diff --git a/order-system/src/main/java/com/infisical/ordersystem/order/OrderTimeoutService.java b/order-system/src/main/java/com/infisical/ordersystem/order/OrderTimeoutService.java
+new file mode 100644
+index 0000000000..de2d27bba6
+--- /dev/null
++++ b/order-system/src/main/java/com/infisical/ordersystem/order/OrderTimeoutService.java
+@@ -0,0 +1,69 @@
++package com.infisical.ordersystem.order;
++
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.springframework.beans.factory.ObjectProvider;
++import org.springframework.dao.TransientDataAccessException;
++import org.springframework.data.domain.PageRequest;
++import org.springframework.data.domain.Pageable;
++import org.springframework.retry.annotation.Backoff;
++import org.springframework.retry.annotation.Recover;
++import org.springframework.retry.annotation.Retryable;
++import org.springframework.scheduling.annotation.Scheduled;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++import java.time.Clock;
++import java.time.Instant;
++import java.util.List;
++
++@Service
++public class OrderTimeoutService {
++
++    private static final Logger log = LoggerFactory.getLogger(OrderTimeoutService.class);
++
++    private final OrderRepository orderRepository;
++    private final Clock clock;
++    private final int batchSize;
++    private final ObjectProvider<OrderTimeoutService> selfProvider;
++
++    public OrderTimeoutService(OrderRepository orderRepository, ObjectProvider<OrderTimeoutService> selfProvider) {
++        this(orderRepository, Clock.systemUTC(), 200, selfProvider);
++    }
++
++    public OrderTimeoutService(OrderRepository orderRepository,
++                               Clock clock,
++                               int batchSize,
++                               ObjectProvider<OrderTimeoutService> selfProvider) {
++        this.orderRepository = orderRepository;
++        this.clock = clock;
++        this.batchSize = batchSize;
++        this.selfProvider = selfProvider;
++    }
++
++    @Scheduled(fixedDelayString = "${order.timeout.scan-delay-ms:60000}")
++    public void scanAndCancelTimedOutOrders() {
++        Instant now = Instant.now(clock);
++        Pageable pageable = PageRequest.of(0, batchSize);
++        List<Order> timedOutOrders = orderRepository.findTimedOutPendingOrders(OrderStatus.PENDING, now, pageable);
++        OrderTimeoutService retryableService = selfProvider.getIfAvailable(() -> this);
++        timedOutOrders.forEach(order -> retryableService.cancelTimedOutOrder(order.getId()));
++    }
++
++    @Transactional
++    @Retryable(
++            retryFor = TransientDataAccessException.class,
++            maxAttemptsExpression = "${order.timeout.retry.max-attempts:3}",
++            backoff = @Backoff(delayExpression = "${order.timeout.retry.delay-ms:200}", multiplier = 2.0)
++    )
++    public boolean cancelTimedOutOrder(Long orderId) {
++        Instant now = Instant.now(clock);
++        return orderRepository.cancelTimedOutOrder(orderId, OrderStatus.PENDING, OrderStatus.CANCELLED, now) > 0;
++    }
++
++    @Recover
++    public boolean recover(TransientDataAccessException exception, Long orderId) {
++        log.error("Failed to cancel timed out order after retries. orderId={}", orderId, exception);
++        return false;
++    }
++}
+diff --git a/order-system/src/main/resources/db/migration/V2__add_timeout_at_to_orders.sql b/order-system/src/main/resources/db/migration/V2__add_timeout_at_to_orders.sql
+new file mode 100644
+index 0000000000..c979342314
+--- /dev/null
++++ b/order-system/src/main/resources/db/migration/V2__add_timeout_at_to_orders.sql
+@@ -0,0 +1,12 @@
++ALTER TABLE orders
++    ADD COLUMN timeout_at TIMESTAMP WITH TIME ZONE;
++
++UPDATE orders
++SET timeout_at = created_at + INTERVAL '30 minutes'
++WHERE timeout_at IS NULL;
++
++ALTER TABLE orders
++    ALTER COLUMN timeout_at SET NOT NULL;
++
++CREATE INDEX IF NOT EXISTS idx_orders_status_timeout_at
++    ON orders (status, timeout_at);
+diff --git a/order-system/src/test/java/com/infisical/ordersystem/order/OrderTest.java b/order-system/src/test/java/com/infisical/ordersystem/order/OrderTest.java
+new file mode 100644
+index 0000000000..7591fc08ca
+--- /dev/null
++++ b/order-system/src/test/java/com/infisical/ordersystem/order/OrderTest.java
+@@ -0,0 +1,24 @@
++package com.infisical.ordersystem.order;
++
++import org.junit.jupiter.api.Test;
++
++import java.time.Instant;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++class OrderTest {
++
++    @Test
++    void prePersistInitializesPendingStatusAndTimeoutAt() {
++        Instant createdAt = Instant.parse("2026-06-08T09:00:00Z");
++        Order order = new Order("ORD-1001");
++        order.setStatus(null);
++        order.setCreatedAt(createdAt);
++
++        order.prePersist();
++
++        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
++        assertThat(order.getTimeoutAt()).isEqualTo(createdAt.plusSeconds(30 * 60));
++        assertThat(order.getUpdatedAt()).isEqualTo(createdAt);
++    }
++}
+diff --git a/order-system/src/test/java/com/infisical/ordersystem/order/OrderTimeoutServiceTest.java b/order-system/src/test/java/com/infisical/ordersystem/order/OrderTimeoutServiceTest.java
+new file mode 100644
+index 0000000000..8d96a0825c
+--- /dev/null
++++ b/order-system/src/test/java/com/infisical/ordersystem/order/OrderTimeoutServiceTest.java
+@@ -0,0 +1,105 @@
++package com.infisical.ordersystem.order;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.ArgumentCaptor;
++import org.mockito.Mockito;
++import org.springframework.beans.factory.ObjectProvider;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Configuration;
++import org.springframework.dao.CannotAcquireLockException;
++import org.springframework.data.domain.Pageable;
++import org.springframework.retry.annotation.EnableRetry;
++import org.springframework.test.context.ContextConfiguration;
++import org.springframework.test.context.junit.jupiter.SpringExtension;
++
++import java.time.Clock;
++import java.time.Instant;
++import java.time.ZoneOffset;
++import java.util.List;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.verify;
++import static org.mockito.Mockito.when;
++
++@ExtendWith(SpringExtension.class)
++@ContextConfiguration(classes = OrderTimeoutServiceTest.TestConfig.class)
++class OrderTimeoutServiceTest {
++
++    private static final Instant FIXED_NOW = Instant.parse("2026-06-08T10:15:30Z");
++
++    @Autowired
++    private OrderTimeoutService orderTimeoutService;
++
++    @Autowired
++    private OrderRepository orderRepository;
++
++    @Test
++    void scanAndCancelTimedOutOrdersCancelsExpiredPendingOrders() {
++        Order first = new Order("ORD-001");
++        first.setId(1L);
++        Order second = new Order("ORD-002");
++        second.setId(2L);
++
++        when(orderRepository.findTimedOutPendingOrders(eq(OrderStatus.PENDING), eq(FIXED_NOW), any(Pageable.class)))
++                .thenReturn(List.of(first, second));
++        when(orderRepository.cancelTimedOutOrder(1L, OrderStatus.PENDING, OrderStatus.CANCELLED, FIXED_NOW)).thenReturn(1);
++        when(orderRepository.cancelTimedOutOrder(2L, OrderStatus.PENDING, OrderStatus.CANCELLED, FIXED_NOW)).thenReturn(1);
++
++        orderTimeoutService.scanAndCancelTimedOutOrders();
++
++        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
++        verify(orderRepository).findTimedOutPendingOrders(eq(OrderStatus.PENDING), eq(FIXED_NOW), pageableCaptor.capture());
++        verify(orderRepository, times(2)).cancelTimedOutOrder(any(), eq(OrderStatus.PENDING), eq(OrderStatus.CANCELLED), eq(FIXED_NOW));
++        assertThat(pageableCaptor.getValue().getPageNumber()).isZero();
++        assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(50);
++    }
++
++    @Test
++    void cancelTimedOutOrderIsIdempotentWhenOrderAlreadyProcessed() {
++        when(orderRepository.cancelTimedOutOrder(9L, OrderStatus.PENDING, OrderStatus.CANCELLED, FIXED_NOW)).thenReturn(0);
++
++        boolean cancelled = orderTimeoutService.cancelTimedOutOrder(9L);
++
++        assertThat(cancelled).isFalse();
++        verify(orderRepository).cancelTimedOutOrder(9L, OrderStatus.PENDING, OrderStatus.CANCELLED, FIXED_NOW);
++    }
++
++    @Test
++    void cancelTimedOutOrderRetriesOnTransientException() {
++        when(orderRepository.cancelTimedOutOrder(5L, OrderStatus.PENDING, OrderStatus.CANCELLED, FIXED_NOW))
++                .thenThrow(new CannotAcquireLockException("lock"))
++                .thenReturn(1);
++
++        boolean cancelled = orderTimeoutService.cancelTimedOutOrder(5L);
++
++        assertThat(cancelled).isTrue();
++        verify(orderRepository, times(2)).cancelTimedOutOrder(5L, OrderStatus.PENDING, OrderStatus.CANCELLED, FIXED_NOW);
++    }
++
++    @Configuration
++    @EnableRetry
++    static class TestConfig {
++
++        @Bean
++        OrderRepository orderRepository() {
++            return Mockito.mock(OrderRepository.class);
++        }
++
++        @Bean
++        Clock clock() {
++            return Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
++        }
++
++        @Bean
++        OrderTimeoutService orderTimeoutService(OrderRepository orderRepository,
++                                                Clock clock,
++                                                ObjectProvider<OrderTimeoutService> selfProvider) {
++            return new OrderTimeoutService(orderRepository, clock, 50, selfProvider);
++        }
++    }
++}
