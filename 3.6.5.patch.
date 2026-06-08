@@ -1,0 +1,457 @@
+diff --git a/backend-go/internal/calculator/calculator.go b/backend-go/internal/calculator/calculator.go
+new file mode 100644
+index 0000000000..64ed60f669
+--- /dev/null
++++ b/backend-go/internal/calculator/calculator.go
+@@ -0,0 +1,9 @@
++package calculator
++
++func CalculateTax(input TaxInput) (TaxResult, error) {
++	strategy, err := GetStrategy(input.Type)
++	if err != nil {
++		return TaxResult{}, err
++	}
++	return strategy.Calculate(input)
++}
+diff --git a/backend-go/internal/calculator/factory.go b/backend-go/internal/calculator/factory.go
+new file mode 100644
+index 0000000000..2708784b9d
+--- /dev/null
++++ b/backend-go/internal/calculator/factory.go
+@@ -0,0 +1,32 @@
++package calculator
++
++import "fmt"
++
++var strategyRegistry = map[TaxType]TaxStrategy{
++	TaxTypeIncome:      &IncomeTaxStrategy{},
++	TaxTypeCorporate:   &CorporateTaxStrategy{},
++	TaxTypeValueAdded:  &ValueAddedTaxStrategy{},
++	TaxTypeSales:       &SalesTaxStrategy{},
++	TaxTypeProperty:    &PropertyTaxStrategy{},
++	TaxTypeCapitalGain: &CapitalGainTaxStrategy{},
++}
++
++func GetStrategy(taxType TaxType) (TaxStrategy, error) {
++	strategy, exists := strategyRegistry[taxType]
++	if !exists {
++		return nil, fmt.Errorf("%w: %s", ErrUnsupportedTaxType, taxType)
++	}
++	return strategy, nil
++}
++
++func RegisterStrategy(taxType TaxType, strategy TaxStrategy) {
++	strategyRegistry[taxType] = strategy
++}
++
++func ListSupportedTypes() []TaxType {
++	types := make([]TaxType, 0, len(strategyRegistry))
++	for t := range strategyRegistry {
++		types = append(types, t)
++	}
++	return types
++}
+diff --git a/backend-go/internal/calculator/interface.go b/backend-go/internal/calculator/interface.go
+new file mode 100644
+index 0000000000..6bb0396221
+--- /dev/null
++++ b/backend-go/internal/calculator/interface.go
+@@ -0,0 +1,33 @@
++package calculator
++
++type TaxType string
++
++const (
++	TaxTypeIncome      TaxType = "income"
++	TaxTypeCorporate   TaxType = "corporate"
++	TaxTypeValueAdded  TaxType = "value_added"
++	TaxTypeSales       TaxType = "sales"
++	TaxTypeProperty    TaxType = "property"
++	TaxTypeCapitalGain TaxType = "capital_gain"
++)
++
++type TaxInput struct {
++	Type       TaxType
++	Amount     float64
++	Region     string
++	IsExempt   bool
++	Deductions float64
++	Year       int
++}
++
++type TaxResult struct {
++	TaxAmount  float64
++	TaxRate    float64
++	TaxType    TaxType
++	Breakdown  map[string]float64
++}
++
++type TaxStrategy interface {
++	Calculate(input TaxInput) (TaxResult, error)
++	SupportedType() TaxType
++}
+diff --git a/backend-go/internal/calculator/rates.go b/backend-go/internal/calculator/rates.go
+new file mode 100644
+index 0000000000..d95eeb08c3
+--- /dev/null
++++ b/backend-go/internal/calculator/rates.go
+@@ -0,0 +1,104 @@
++package calculator
++
++type TaxBracket struct {
++	Min    float64
++	Max    float64
++	Rate   float64
++	Label  string
++}
++
++func getIncomeBrackets(region string) []TaxBracket {
++	switch region {
++	case "US":
++		return []TaxBracket{
++			{Min: 0, Max: 11000, Rate: 0.10, Label: "10%"},
++			{Min: 11000, Max: 44725, Rate: 0.12, Label: "12%"},
++			{Min: 44725, Max: 95375, Rate: 0.22, Label: "22%"},
++			{Min: 95375, Max: 182100, Rate: 0.24, Label: "24%"},
++			{Min: 182100, Max: 231250, Rate: 0.32, Label: "32%"},
++			{Min: 231250, Max: 578125, Rate: 0.35, Label: "35%"},
++			{Min: 578125, Max: 0, Rate: 0.37, Label: "37%"},
++		}
++	case "CN":
++		return []TaxBracket{
++			{Min: 0, Max: 36000, Rate: 0.03, Label: "3%"},
++			{Min: 36000, Max: 144000, Rate: 0.10, Label: "10%"},
++			{Min: 144000, Max: 300000, Rate: 0.20, Label: "20%"},
++			{Min: 300000, Max: 420000, Rate: 0.25, Label: "25%"},
++			{Min: 420000, Max: 660000, Rate: 0.30, Label: "30%"},
++			{Min: 660000, Max: 960000, Rate: 0.35, Label: "35%"},
++			{Min: 960000, Max: 0, Rate: 0.45, Label: "45%"},
++		}
++	default:
++		return []TaxBracket{
++			{Min: 0, Max: 50000, Rate: 0.20, Label: "20%"},
++			{Min: 50000, Max: 0, Rate: 0.40, Label: "40%"},
++		}
++	}
++}
++
++func getCorporateRate(region string) float64 {
++	switch region {
++	case "US":
++		return 0.21
++	case "CN":
++		return 0.25
++	case "IE":
++		return 0.125
++	default:
++		return 0.25
++	}
++}
++
++func getVATRate(region string) float64 {
++	switch region {
++	case "CN":
++		return 0.13
++	case "DE":
++		return 0.19
++	case "UK":
++		return 0.20
++	default:
++		return 0.10
++	}
++}
++
++func getSalesTaxRate(region string) float64 {
++	switch region {
++	case "US-CA":
++		return 0.0725
++	case "US-NY":
++		return 0.08
++	case "US-TX":
++		return 0.0625
++	default:
++		return 0.05
++	}
++}
++
++func getPropertyTaxRate(region string) float64 {
++	switch region {
++	case "US-NJ":
++		return 0.0249
++	case "US-IL":
++		return 0.0227
++	case "US-TX":
++		return 0.0180
++	default:
++		return 0.01
++	}
++}
++
++func getCapitalGainRate(year int, region string) float64 {
++	switch region {
++	case "US":
++		if year >= 2024 {
++			return 0.20
++		}
++		return 0.15
++	case "CN":
++		return 0.20
++	default:
++		return 0.15
++	}
++}
+diff --git a/backend-go/internal/calculator/strategies.go b/backend-go/internal/calculator/strategies.go
+new file mode 100644
+index 0000000000..a9a15d80fe
+--- /dev/null
++++ b/backend-go/internal/calculator/strategies.go
+@@ -0,0 +1,249 @@
++package calculator
++
++import (
++	"errors"
++	"math"
++)
++
++var (
++	ErrUnsupportedTaxType = errors.New("unsupported tax type")
++	ErrInvalidAmount      = errors.New("invalid amount: must be non-negative")
++)
++
++type IncomeTaxStrategy struct{}
++
++func (s *IncomeTaxStrategy) SupportedType() TaxType {
++	return TaxTypeIncome
++}
++
++func (s *IncomeTaxStrategy) Calculate(input TaxInput) (TaxResult, error) {
++	if input.Amount < 0 {
++		return TaxResult{}, ErrInvalidAmount
++	}
++
++	if input.IsExempt {
++		return TaxResult{
++			TaxAmount: 0,
++			TaxRate:   0,
++			TaxType:   TaxTypeIncome,
++			Breakdown: map[string]float64{"exempt": 0},
++		}, nil
++	}
++
++	taxableIncome := input.Amount - input.Deductions
++	if taxableIncome < 0 {
++		taxableIncome = 0
++	}
++
++	brackets := getIncomeBrackets(input.Region)
++	taxAmount := 0.0
++	breakdown := make(map[string]float64)
++	remaining := taxableIncome
++
++	for _, bracket := range brackets {
++		if remaining <= 0 {
++			break
++		}
++
++		taxableInBracket := math.Min(remaining, bracket.Max-bracket.Min)
++		if bracket.Max == 0 {
++			taxableInBracket = remaining
++		}
++
++		taxInBracket := taxableInBracket * bracket.Rate
++		taxAmount += taxInBracket
++		breakdown[bracket.Label] = taxInBracket
++		remaining -= taxableInBracket
++	}
++
++	var effectiveRate float64
++	if input.Amount > 0 {
++		effectiveRate = taxAmount / input.Amount
++	}
++
++	return TaxResult{
++		TaxAmount: math.Round(taxAmount*100) / 100,
++		TaxRate:   math.Round(effectiveRate*10000) / 10000,
++		TaxType:   TaxTypeIncome,
++		Breakdown: breakdown,
++	}, nil
++}
++
++type CorporateTaxStrategy struct{}
++
++func (s *CorporateTaxStrategy) SupportedType() TaxType {
++	return TaxTypeCorporate
++}
++
++func (s *CorporateTaxStrategy) Calculate(input TaxInput) (TaxResult, error) {
++	if input.Amount < 0 {
++		return TaxResult{}, ErrInvalidAmount
++	}
++
++	if input.IsExempt {
++		return TaxResult{
++			TaxAmount: 0,
++			TaxRate:   0,
++			TaxType:   TaxTypeCorporate,
++			Breakdown: map[string]float64{"exempt": 0},
++		}, nil
++	}
++
++	taxableIncome := input.Amount - input.Deductions
++	if taxableIncome < 0 {
++		taxableIncome = 0
++	}
++
++	rate := getCorporateRate(input.Region)
++	taxAmount := taxableIncome * rate
++
++	var effectiveRate float64
++	if input.Amount > 0 {
++		effectiveRate = taxAmount / input.Amount
++	}
++
++	return TaxResult{
++		TaxAmount: math.Round(taxAmount*100) / 100,
++		TaxRate:   math.Round(effectiveRate*10000) / 10000,
++		TaxType:   TaxTypeCorporate,
++		Breakdown: map[string]float64{"base_tax": taxAmount},
++	}, nil
++}
++
++type ValueAddedTaxStrategy struct{}
++
++func (s *ValueAddedTaxStrategy) SupportedType() TaxType {
++	return TaxTypeValueAdded
++}
++
++func (s *ValueAddedTaxStrategy) Calculate(input TaxInput) (TaxResult, error) {
++	if input.Amount < 0 {
++		return TaxResult{}, ErrInvalidAmount
++	}
++
++	if input.IsExempt {
++		return TaxResult{
++			TaxAmount: 0,
++			TaxRate:   0,
++			TaxType:   TaxTypeValueAdded,
++			Breakdown: map[string]float64{"exempt": 0},
++		}, nil
++	}
++
++	rate := getVATRate(input.Region)
++	taxAmount := input.Amount * rate
++
++	return TaxResult{
++		TaxAmount: math.Round(taxAmount*100) / 100,
++		TaxRate:   math.Round(rate*10000) / 10000,
++		TaxType:   TaxTypeValueAdded,
++		Breakdown: map[string]float64{"vat": taxAmount},
++	}, nil
++}
++
++type SalesTaxStrategy struct{}
++
++func (s *SalesTaxStrategy) SupportedType() TaxType {
++	return TaxTypeSales
++}
++
++func (s *SalesTaxStrategy) Calculate(input TaxInput) (TaxResult, error) {
++	if input.Amount < 0 {
++		return TaxResult{}, ErrInvalidAmount
++	}
++
++	if input.IsExempt {
++		return TaxResult{
++			TaxAmount: 0,
++			TaxRate:   0,
++			TaxType:   TaxTypeSales,
++			Breakdown: map[string]float64{"exempt": 0},
++		}, nil
++	}
++
++	rate := getSalesTaxRate(input.Region)
++	taxAmount := input.Amount * rate
++
++	return TaxResult{
++		TaxAmount: math.Round(taxAmount*100) / 100,
++		TaxRate:   math.Round(rate*10000) / 10000,
++		TaxType:   TaxTypeSales,
++		Breakdown: map[string]float64{"sales_tax": taxAmount},
++	}, nil
++}
++
++type PropertyTaxStrategy struct{}
++
++func (s *PropertyTaxStrategy) SupportedType() TaxType {
++	return TaxTypeProperty
++}
++
++func (s *PropertyTaxStrategy) Calculate(input TaxInput) (TaxResult, error) {
++	if input.Amount < 0 {
++		return TaxResult{}, ErrInvalidAmount
++	}
++
++	if input.IsExempt {
++		return TaxResult{
++			TaxAmount: 0,
++			TaxRate:   0,
++			TaxType:   TaxTypeProperty,
++			Breakdown: map[string]float64{"exempt": 0},
++		}, nil
++	}
++
++	rate := getPropertyTaxRate(input.Region)
++	assessedValue := input.Amount * 0.8
++	taxAmount := assessedValue * rate
++
++	return TaxResult{
++		TaxAmount: math.Round(taxAmount*100) / 100,
++		TaxRate:   math.Round(rate*10000) / 10000,
++		TaxType:   TaxTypeProperty,
++		Breakdown: map[string]float64{
++			"assessed_value": assessedValue,
++			"property_tax":   taxAmount,
++		},
++	}, nil
++}
++
++type CapitalGainTaxStrategy struct{}
++
++func (s *CapitalGainTaxStrategy) SupportedType() TaxType {
++	return TaxTypeCapitalGain
++}
++
++func (s *CapitalGainTaxStrategy) Calculate(input TaxInput) (TaxResult, error) {
++	if input.Amount < 0 {
++		return TaxResult{}, ErrInvalidAmount
++	}
++
++	if input.IsExempt {
++		return TaxResult{
++			TaxAmount: 0,
++			TaxRate:   0,
++			TaxType:   TaxTypeCapitalGain,
++			Breakdown: map[string]float64{"exempt": 0},
++		}, nil
++	}
++
++	taxableGain := input.Amount - input.Deductions
++	if taxableGain < 0 {
++		taxableGain = 0
++	}
++
++	rate := getCapitalGainRate(input.Year, input.Region)
++	taxAmount := taxableGain * rate
++
++	var effectiveRate float64
++	if input.Amount > 0 {
++		effectiveRate = taxAmount / input.Amount
++	}
++
++	return TaxResult{
++		TaxAmount: math.Round(taxAmount*100) / 100,
++		TaxRate:   math.Round(effectiveRate*10000) / 10000,
++		TaxType:   TaxTypeCapitalGain,
++		Breakdown: map[string]float64{"capital_gain_tax": taxAmount},
++	}, nil
++}
