@@ -1,0 +1,760 @@
+diff --git a/backend-go/internal/calculator/calculator.go b/backend-go/internal/calculator/calculator.go
+new file mode 100644
+index 0000000000..d1fcbaca4a
+--- /dev/null
++++ b/backend-go/internal/calculator/calculator.go
+@@ -0,0 +1,114 @@
++package calculator
++
++import (
++	"context"
++	"errors"
++	"fmt"
++)
++
++var (
++	ErrUnsupportedTaxType = errors.New("unsupported tax type")
++	ErrInvalidInput       = errors.New("invalid tax input")
++)
++
++type TaxType string
++
++const (
++	TaxTypeIncome    TaxType = "income"
++	TaxTypeVAT       TaxType = "vat"
++	TaxTypeCorporate TaxType = "corporate"
++	TaxTypeProperty  TaxType = "property"
++	TaxTypeStampDuty TaxType = "stamp_duty"
++)
++
++type TaxInput struct {
++	TaxType    TaxType  `json:"tax_type"`
++	Amount     float64  `json:"amount"`
++	Deductions float64  `json:"deductions"`
++	Rate       float64  `json:"rate"`
++	IsHighTech *bool    `json:"is_high_tech,omitempty"`
++	PropertyID *string  `json:"property_id,omitempty"`
++	DocType    *string  `json:"doc_type,omitempty"`
++}
++
++type TaxResult struct {
++	TaxAmount  float64  `json:"tax_amount"`
++	Taxable    float64  `json:"taxable"`
++	Rate       float64  `json:"rate"`
++	Breakdown  string   `json:"breakdown"`
++	Err        error    `json:"-"`
++}
++
++type TaxStrategy interface {
++	Calculate(ctx context.Context, input *TaxInput) (*TaxResult, error)
++	TaxType() TaxType
++	Validate(input *TaxInput) error
++}
++
++var ErrStrategyRegistry = errors.New("strategy registry error")
++
++type StrategyRegistry struct {
++	strategies map[TaxType]TaxStrategy
++}
++
++func NewStrategyRegistry() *StrategyRegistry {
++	r := &StrategyRegistry{
++		strategies: make(map[TaxType]TaxStrategy),
++	}
++	r.registerDefaults()
++	return r
++}
++
++func (r *StrategyRegistry) Register(s TaxStrategy) {
++	r.strategies[s.TaxType()] = s
++}
++
++func (r *StrategyRegistry) Get(taxType TaxType) (TaxStrategy, error) {
++	s, ok := r.strategies[taxType]
++	if !ok {
++		return nil, fmt.Errorf("%w: %s", ErrUnsupportedTaxType, taxType)
++	}
++	return s, nil
++}
++
++func (r *StrategyRegistry) registerDefaults() {
++	r.Register(&IncomeTaxStrategy{})
++	r.Register(&VATStrategy{})
++	r.Register(&CorporateTaxStrategy{})
++	r.Register(&PropertyTaxStrategy{})
++	r.Register(&StampDutyStrategy{})
++}
++
++func ValidateInput(input *TaxInput) error {
++	if input == nil {
++		return fmt.Errorf("%w: input is nil", ErrInvalidInput)
++	}
++	if input.Amount < 0 {
++		return fmt.Errorf("%w: amount cannot be negative", ErrInvalidInput)
++	}
++	if input.Deductions < 0 {
++		return fmt.Errorf("%w: deductions cannot be negative", ErrInvalidInput)
++	}
++	if input.TaxType == "" {
++		return fmt.Errorf("%w: tax type is required", ErrInvalidInput)
++	}
++	return nil
++}
++
++func CalculateTax(ctx context.Context, input *TaxInput) (*TaxResult, error) {
++	if err := ValidateInput(input); err != nil {
++		return nil, err
++	}
++
++	registry := NewStrategyRegistry()
++	strategy, err := registry.Get(input.TaxType)
++	if err != nil {
++		return nil, err
++	}
++
++	if err := strategy.Validate(input); err != nil {
++		return nil, err
++	}
++
++	return strategy.Calculate(ctx, input)
++}
+\ No newline at end of file
+diff --git a/backend-go/internal/calculator/calculator_test.go b/backend-go/internal/calculator/calculator_test.go
+new file mode 100644
+index 0000000000..27e1a3bafa
+--- /dev/null
++++ b/backend-go/internal/calculator/calculator_test.go
+@@ -0,0 +1,305 @@
++package calculator
++
++import (
++	"context"
++	"testing"
++)
++
++func ptr[T any](v T) *T { return &v }
++
++func TestCalculateTax_Income(t *testing.T) {
++	ctx := context.Background()
++
++	tests := []struct {
++		name       string
++		input      *TaxInput
++		wantTaxMin float64
++		wantTaxMax float64
++		wantErr    bool
++	}{
++		{
++			name: "below threshold - no tax",
++			input: &TaxInput{
++				TaxType:    TaxTypeIncome,
++				Amount:     50000,
++				Deductions: 0,
++			},
++			wantTaxMin: 0,
++			wantTaxMax: 0,
++		},
++		{
++			name: "first bracket - 3%",
++			input: &TaxInput{
++				TaxType:    TaxTypeIncome,
++				Amount:     100000,
++				Deductions: 0,
++			},
++			wantTaxMin: 1000,
++			wantTaxMax: 2000,
++		},
++		{
++			name: "high income - higher bracket",
++			input: &TaxInput{
++				TaxType:    TaxTypeIncome,
++				Amount:     500000,
++				Deductions: 0,
++			},
++			wantTaxMin: 50000,
++			wantTaxMax: 150000,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			result, err := CalculateTax(ctx, tt.input)
++			if tt.wantErr {
++				if err == nil {
++					t.Error("expected error, got nil")
++				}
++				return
++			}
++			if err != nil {
++				t.Fatalf("unexpected error: %v", err)
++			}
++			if result.TaxAmount < tt.wantTaxMin || result.TaxAmount > tt.wantTaxMax {
++				t.Errorf("tax amount %.2f not in range [%.2f, %.2f]",
++					result.TaxAmount, tt.wantTaxMin, tt.wantTaxMax)
++			}
++		})
++	}
++}
++
++func TestCalculateTax_VAT(t *testing.T) {
++	ctx := context.Background()
++
++	result, err := CalculateTax(ctx, &TaxInput{
++		TaxType:    TaxTypeVAT,
++		Amount:     100000,
++		Deductions: 30000,
++		Rate:       0.13,
++	})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++
++	expected := (100000 - 30000) * 0.13
++	if result.TaxAmount != expected {
++		t.Errorf("expected VAT %.2f, got %.2f", expected, result.TaxAmount)
++	}
++}
++
++func TestCalculateTax_Corporate(t *testing.T) {
++	ctx := context.Background()
++
++	t.Run("standard rate", func(t *testing.T) {
++		result, err := CalculateTax(ctx, &TaxInput{
++			TaxType:    TaxTypeCorporate,
++			Amount:     1000000,
++			Deductions: 200000,
++		})
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		expected := (1000000 - 200000) * 0.25
++		if result.TaxAmount != expected {
++			t.Errorf("expected %.2f, got %.2f", expected, result.TaxAmount)
++		}
++	})
++
++	t.Run("high-tech rate", func(t *testing.T) {
++		result, err := CalculateTax(ctx, &TaxInput{
++			TaxType:    TaxTypeCorporate,
++			Amount:     1000000,
++			Deductions: 200000,
++			IsHighTech: ptr(true),
++		})
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		expected := (1000000 - 200000) * 0.15
++		if result.TaxAmount != expected {
++			t.Errorf("expected %.2f, got %.2f", expected, result.TaxAmount)
++		}
++	})
++
++	t.Run("loss no tax", func(t *testing.T) {
++		result, err := CalculateTax(ctx, &TaxInput{
++			TaxType:    TaxTypeCorporate,
++			Amount:     100000,
++			Deductions: 200000,
++		})
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		if result.TaxAmount != 0 {
++			t.Errorf("expected 0 tax for loss, got %.2f", result.TaxAmount)
++		}
++	})
++}
++
++func TestCalculateTax_Property(t *testing.T) {
++	ctx := context.Background()
++
++	result, err := CalculateTax(ctx, &TaxInput{
++		TaxType:    TaxTypeProperty,
++		Amount:     5000000,
++		PropertyID: ptr("PROP-001"),
++	})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++
++	expected := 5000000 * 0.7 * 0.012
++	if result.TaxAmount != expected {
++		t.Errorf("expected %.2f, got %.2f", expected, result.TaxAmount)
++	}
++}
++
++func TestCalculateTax_StampDuty(t *testing.T) {
++	ctx := context.Background()
++
++	t.Run("purchase contract", func(t *testing.T) {
++		result, err := CalculateTax(ctx, &TaxInput{
++			TaxType: TaxTypeStampDuty,
++			Amount:  1000000,
++			DocType: ptr("purchase"),
++		})
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		expected := 1000000 * 0.0005
++		if result.TaxAmount != expected {
++			t.Errorf("expected %.2f, got %.2f", expected, result.TaxAmount)
++		}
++	})
++
++	t.Run("unknown doc type", func(t *testing.T) {
++		_, err := CalculateTax(ctx, &TaxInput{
++			TaxType: TaxTypeStampDuty,
++			Amount:  1000000,
++			DocType: ptr("unknown_type"),
++		})
++		if err == nil {
++			t.Error("expected error for unknown doc type")
++		}
++	})
++}
++
++func TestCalculateTax_InvalidInput(t *testing.T) {
++	ctx := context.Background()
++
++	tests := []struct {
++		name  string
++		input *TaxInput
++	}{
++		{"nil input", nil},
++		{"negative amount", &TaxInput{TaxType: TaxTypeIncome, Amount: -100}},
++		{"negative deductions", &TaxInput{TaxType: TaxTypeIncome, Amount: 100, Deductions: -50}},
++		{"empty tax type", &TaxInput{Amount: 100}},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			_, err := CalculateTax(ctx, tt.input)
++			if err == nil {
++				t.Error("expected error, got nil")
++			}
++		})
++	}
++}
++
++func TestCalculateTax_UnsupportedType(t *testing.T) {
++	ctx := context.Background()
++
++	_, err := CalculateTax(ctx, &TaxInput{
++		TaxType: TaxType("unknown_tax"),
++		Amount:  100,
++	})
++	if err == nil {
++		t.Error("expected error for unsupported tax type")
++	}
++}
++
++func TestStrategyRegistry(t *testing.T) {
++	r := NewStrategyRegistry()
++
++	s, err := r.Get(TaxTypeIncome)
++	if err != nil {
++		t.Fatalf("expected income strategy to be registered: %v", err)
++	}
++	if s.TaxType() != TaxTypeIncome {
++		t.Errorf("expected TaxTypeIncome, got %s", s.TaxType())
++	}
++}
++
++func TestStrategy_Validate(t *testing.T) {
++	tests := []struct {
++		name     string
++		strategy TaxStrategy
++		input    *TaxInput
++		wantErr  bool
++	}{
++		{
++			name:     "income tax valid",
++			strategy: NewIncomeTaxStrategy(),
++			input:    &TaxInput{Amount: 100000},
++		},
++		{
++			name:     "vat missing rate",
++			strategy: NewVATStrategy(),
++			input:    &TaxInput{Amount: 100000},
++			wantErr:  true,
++		},
++		{
++			name:     "vat valid",
++			strategy: NewVATStrategy(),
++			input:    &TaxInput{Amount: 100000, Rate: 0.13},
++		},
++		{
++			name:     "stamp duty missing doc type",
++			strategy: NewStampDutyStrategy(),
++			input:    &TaxInput{Amount: 100000},
++			wantErr:  true,
++		},
++	}
++
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			err := tt.strategy.Validate(tt.input)
++			if tt.wantErr && err == nil {
++				t.Error("expected validation error")
++			}
++			if !tt.wantErr && err != nil {
++				t.Errorf("unexpected validation error: %v", err)
++			}
++		})
++	}
++}
++
++func TestBuilder(t *testing.T) {
++	b, err := NewTaxBuilder(TaxTypeCorporate)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++
++	s := b.Build()
++	if s.TaxType() != TaxTypeCorporate {
++		t.Errorf("expected TaxTypeCorporate, got %s", s.TaxType())
++	}
++}
++
++func TestGetAllSupportedTaxTypes(t *testing.T) {
++	types := GetAllSupportedTaxTypes()
++	if len(types) != 5 {
++		t.Errorf("expected 5 supported tax types, got %d", len(types))
++	}
++}
++
++func TestIsSupported(t *testing.T) {
++	if !IsSupported(TaxTypeIncome) {
++		t.Error("income tax should be supported")
++	}
++	if IsSupported(TaxType("unknown")) {
++		t.Error("unknown tax type should not be supported")
++	}
++}
+\ No newline at end of file
+diff --git a/backend-go/internal/calculator/factory.go b/backend-go/internal/calculator/factory.go
+new file mode 100644
+index 0000000000..f71f4bbf2f
+--- /dev/null
++++ b/backend-go/internal/calculator/factory.go
+@@ -0,0 +1,91 @@
++package calculator
++
++import (
++	"fmt"
++)
++
++type TaxStrategyFactory interface {
++	Create(taxType TaxType) (TaxStrategy, error)
++}
++
++type SimpleTaxFactory struct {
++	registry *StrategyRegistry
++}
++
++func NewSimpleTaxFactory() *SimpleTaxFactory {
++	return &SimpleTaxFactory{
++		registry: NewStrategyRegistry(),
++	}
++}
++
++func (f *SimpleTaxFactory) Create(taxType TaxType) (TaxStrategy, error) {
++	return f.registry.Get(taxType)
++}
++
++func NewIncomeTaxStrategy() TaxStrategy {
++	return &IncomeTaxStrategy{}
++}
++
++func NewVATStrategy() TaxStrategy {
++	return &VATStrategy{}
++}
++
++func NewCorporateTaxStrategy() TaxStrategy {
++	return &CorporateTaxStrategy{}
++}
++
++func NewPropertyTaxStrategy() TaxStrategy {
++	return &PropertyTaxStrategy{}
++}
++
++func NewStampDutyStrategy() TaxStrategy {
++	return &StampDutyStrategy{}
++}
++
++type Builder struct {
++	strategy TaxStrategy
++}
++
++func NewTaxBuilder(taxType TaxType) (*Builder, error) {
++	switch taxType {
++	case TaxTypeIncome:
++		return &Builder{strategy: NewIncomeTaxStrategy()}, nil
++	case TaxTypeVAT:
++		return &Builder{strategy: NewVATStrategy()}, nil
++	case TaxTypeCorporate:
++		return &Builder{strategy: NewCorporateTaxStrategy()}, nil
++	case TaxTypeProperty:
++		return &Builder{strategy: NewPropertyTaxStrategy()}, nil
++	case TaxTypeStampDuty:
++		return &Builder{strategy: NewStampDutyStrategy()}, nil
++	default:
++		return nil, fmt.Errorf("%w: %s", ErrUnsupportedTaxType, taxType)
++	}
++}
++
++func (b *Builder) Build() TaxStrategy {
++	return b.strategy
++}
++
++func (b *Builder) WithRate(rate float64) *Builder {
++	return b
++}
++
++func (b *Builder) WithDeduction(deduction float64) *Builder {
++	return b
++}
++
++func GetAllSupportedTaxTypes() []TaxType {
++	registry := NewStrategyRegistry()
++	types := make([]TaxType, 0, len(registry.strategies))
++	for k := range registry.strategies {
++		types = append(types, k)
++	}
++	return types
++}
++
++func IsSupported(taxType TaxType) bool {
++	registry := NewStrategyRegistry()
++	_, err := registry.Get(taxType)
++	return err == nil
++}
+\ No newline at end of file
+diff --git a/backend-go/internal/calculator/strategies.go b/backend-go/internal/calculator/strategies.go
+new file mode 100644
+index 0000000000..b6fdb54677
+--- /dev/null
++++ b/backend-go/internal/calculator/strategies.go
+@@ -0,0 +1,222 @@
++package calculator
++
++import (
++	"context"
++	"fmt"
++)
++
++type rateBracket struct {
++	lowerBound float64
++	upperBound float64
++	rate       float64
++	deduction  float64
++}
++
++var incomeTaxBrackets = []rateBracket{
++	{0, 36000, 0.03, 0},
++	{36000, 144000, 0.10, 2520},
++	{144000, 300000, 0.20, 16920},
++	{300000, 420000, 0.25, 31920},
++	{420000, 660000, 0.30, 52920},
++	{660000, 960000, 0.35, 85920},
++	{960000, 1e18, 0.45, 181920},
++}
++
++type IncomeTaxStrategy struct{}
++
++func (s *IncomeTaxStrategy) TaxType() TaxType { return TaxTypeIncome }
++
++func (s *IncomeTaxStrategy) Validate(input *TaxInput) error {
++	if input.Amount == 0 && input.Deductions == 0 {
++		return fmt.Errorf("%w: income tax requires amount or deductions", ErrInvalidInput)
++	}
++	return nil
++}
++
++func (s *IncomeTaxStrategy) Calculate(_ context.Context, input *TaxInput) (*TaxResult, error) {
++	taxable := input.Amount - input.Deductions - 60000
++	if taxable <= 0 {
++		return &TaxResult{
++			TaxAmount: 0,
++			Taxable:   taxable,
++			Rate:      0,
++			Breakdown: fmt.Sprintf("个人所得税: 应纳税所得额 %.2f <= 0, 无需缴税", taxable),
++		}, nil
++	}
++
++	var taxAmount float64
++	var appliedRate float64
++	for _, b := range incomeTaxBrackets {
++		if taxable > b.lowerBound {
++			taxAmount = taxable*b.rate - b.deduction
++			appliedRate = b.rate
++		}
++	}
++
++	return &TaxResult{
++		TaxAmount: taxAmount,
++		Taxable:   taxable,
++		Rate:      appliedRate,
++		Breakdown: fmt.Sprintf(
++			"个人所得税: 应纳税所得额 %.2f = 收入 %.2f - 扣除 %.2f - 起征点 60000, 税额 %.2f (税率 %.0f%%)",
++			taxable, input.Amount, input.Deductions, taxAmount, appliedRate*100,
++		),
++	}, nil
++}
++
++type VATStrategy struct{}
++
++func (s *VATStrategy) TaxType() TaxType { return TaxTypeVAT }
++
++func (s *VATStrategy) Validate(input *TaxInput) error {
++	if input.Amount <= 0 {
++		return fmt.Errorf("%w: VAT requires positive amount", ErrInvalidInput)
++	}
++	if input.Rate <= 0 {
++		return fmt.Errorf("%w: VAT requires positive rate", ErrInvalidInput)
++	}
++	return nil
++}
++
++func (s *VATStrategy) Calculate(_ context.Context, input *TaxInput) (*TaxResult, error) {
++	outputVAT := input.Amount * input.Rate
++	inputVAT := input.Deductions * input.Rate
++	taxAmount := outputVAT - inputVAT
++
++	return &TaxResult{
++		TaxAmount: taxAmount,
++		Taxable:   input.Amount - input.Deductions,
++		Rate:      input.Rate,
++		Breakdown: fmt.Sprintf(
++			"增值税: 销项税额 %.2f (%.2f × %.0f%%) - 进项税额 %.2f (%.2f × %.0f%%) = %.2f",
++			outputVAT, input.Amount, input.Rate*100,
++			inputVAT, input.Deductions, input.Rate*100,
++			taxAmount,
++		),
++	}, nil
++}
++
++type CorporateTaxStrategy struct{}
++
++func (s *CorporateTaxStrategy) TaxType() TaxType { return TaxTypeCorporate }
++
++func (s *CorporateTaxStrategy) Validate(input *TaxInput) error {
++	if input.Amount < 0 {
++		return fmt.Errorf("%w: corporate income cannot be negative", ErrInvalidInput)
++	}
++	return nil
++}
++
++func (s *CorporateTaxStrategy) Calculate(_ context.Context, input *TaxInput) (*TaxResult, error) {
++	taxable := input.Amount - input.Deductions
++	if taxable <= 0 {
++		return &TaxResult{
++			TaxAmount: 0,
++			Taxable:   taxable,
++			Rate:      0,
++			Breakdown: fmt.Sprintf("企业所得税: 应纳税所得额 %.2f <= 0, 无需缴税", taxable),
++		}, nil
++	}
++
++	rate := 0.25
++	specialLabel := "标准税率"
++
++	if input.IsHighTech != nil && *input.IsHighTech {
++		rate = 0.15
++		specialLabel = "高新技术企业优惠税率"
++	}
++
++	taxAmount := taxable * rate
++
++	return &TaxResult{
++		TaxAmount: taxAmount,
++		Taxable:   taxable,
++		Rate:      rate,
++		Breakdown: fmt.Sprintf(
++			"企业所得税(%s): 应纳税所得额 %.2f = 收入 %.2f - 扣除 %.2f, 税额 %.2f (税率 %.0f%%)",
++			specialLabel, taxable, input.Amount, input.Deductions, taxAmount, rate*100,
++		),
++	}, nil
++}
++
++type PropertyTaxStrategy struct{}
++
++func (s *PropertyTaxStrategy) TaxType() TaxType { return TaxTypeProperty }
++
++func (s *PropertyTaxStrategy) Validate(input *TaxInput) error {
++	if input.Amount <= 0 {
++		return fmt.Errorf("%w: property value must be positive", ErrInvalidInput)
++	}
++	return nil
++}
++
++func (s *PropertyTaxStrategy) Calculate(_ context.Context, input *TaxInput) (*TaxResult, error) {
++	taxableValue := input.Amount * 0.7
++	rate := 0.012
++
++	if input.Rate > 0 {
++		rate = input.Rate
++	}
++
++	taxAmount := taxableValue * rate
++	propInfo := ""
++	if input.PropertyID != nil {
++		propInfo = fmt.Sprintf(" [房产编号: %s]", *input.PropertyID)
++	}
++
++	return &TaxResult{
++		TaxAmount: taxAmount,
++		Taxable:   taxableValue,
++		Rate:      rate,
++		Breakdown: fmt.Sprintf(
++			"房产税%s: 计税余值 %.2f = 原值 %.2f × 70%%, 税额 %.2f (税率 %.1f%%)",
++			propInfo, taxableValue, input.Amount, taxAmount, rate*100,
++		),
++	}, nil
++}
++
++var stampDutyRates = map[string]float64{
++	"purchase":      0.0005,
++	"loan":          0.00005,
++	"lease":         0.001,
++	"transport":     0.0005,
++	"warehouse":     0.001,
++	"property":      0.0005,
++	"tech_contract": 0.0003,
++}
++
++type StampDutyStrategy struct{}
++
++func (s *StampDutyStrategy) TaxType() TaxType { return TaxTypeStampDuty }
++
++func (s *StampDutyStrategy) Validate(input *TaxInput) error {
++	if input.Amount <= 0 {
++		return fmt.Errorf("%w: stamp duty requires positive amount", ErrInvalidInput)
++	}
++	if input.DocType == nil || *input.DocType == "" {
++		return fmt.Errorf("%w: stamp duty requires document type", ErrInvalidInput)
++	}
++	if _, ok := stampDutyRates[*input.DocType]; !ok {
++		return fmt.Errorf("%w: unknown document type: %s", ErrInvalidInput, *input.DocType)
++	}
++	return nil
++}
++
++func (s *StampDutyStrategy) Calculate(_ context.Context, input *TaxInput) (*TaxResult, error) {
++	rate := stampDutyRates[*input.DocType]
++	if input.Rate > 0 {
++		rate = input.Rate
++	}
++
++	taxAmount := input.Amount * rate
++
++	return &TaxResult{
++		TaxAmount: taxAmount,
++		Taxable:   input.Amount,
++		Rate:      rate,
++		Breakdown: fmt.Sprintf(
++			"印花税(%s): 金额 %.2f × %.3f%% = %.2f",
++			*input.DocType, input.Amount, rate*100, taxAmount,
++		),
++	}, nil
++}
+\ No newline at end of file
