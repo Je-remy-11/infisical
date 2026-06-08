@@ -1,0 +1,200 @@
+diff --git a/.env.dev.example b/.env.dev.example
+index fbc3c73063..96b39be987 100644
+--- a/.env.dev.example
++++ b/.env.dev.example
+@@ -1,3 +1,39 @@
++# =============================================================================
++# Infisical Development Environment Configuration
++# =============================================================================
++# Port Mappings (docker-compose.dev.yml):
++#   Backend API:        4000  -> 4000  (main API server)
++#   Backend Debug:      9229  -> 9229  (Node.js inspector / debugger)
++#   Backend OTEL:       9464  -> 9464  (Prometheus metrics)
++#   Frontend (Vite):    3000  -> 3000  (Vite dev server with HMR)
++#   Backend-Go:         4040  -> 4040  (Go sidecar, requires --profile go)
++#   Nginx:              8080  -> 80    (reverse proxy to frontend + backend)
++#   PostgreSQL:         5432  -> 5432
++#   Redis:              6379  -> 6379
++#   Redis Commander:    8085  -> 8081
++#   ClickHouse HTTP:    8123  -> 8123
++#   ClickHouse Native:  9000  -> 9000
++#   SMTP (MailHog):     1025  -> 1025
++#   MailHog Web UI:     8025  -> 8025
++#   Bull Board:         3008  -> 3000  (queue monitoring, --profile queue)
++#   pgAdmin:            5050  -> 80
++#   Prometheus:         9090  -> 9090  (--profile metrics)
++#   Grafana:            3005  -> 3000  (--profile metrics)
++#   OpenLDAP:           389   -> 389   (--profile ldap)
++#   phpLDAPadmin:       6433  -> 80    (--profile ldap)
++#   Keycloak:           8088  -> 8080  (--profile sso)
++#   PingFederate Admin: 9999  -> 9999  (--profile pingfed)
++#   PingFederate OIDC:  9031  -> 9031  (--profile pingfed)
++#   Samba AD LDAP:      1389  -> 389   (--profile ad)
++#   Samba AD LDAPS:     1636  -> 636   (--profile ad)
++#   Samba AD Kerberos:  88    -> 88    (--profile ad)
++#
++# For hot-reload, the following technologies are used:
++#   Backend:    nodemon watches src/ for .ts/.js changes
++#   Frontend:   Vite HMR watches src/ via WebSocket on port 3000
++#   Backend-Go: Air watches for .go/.toml changes (--profile go)
++# =============================================================================
++
+ # Keys
+ # Required key for platform encryption/decryption ops
+ # THIS IS A SAMPLE ENCRYPTION KEY AND SHOULD NEVER BE USED FOR PRODUCTION
+diff --git a/dev-entrypoint.sh b/dev-entrypoint.sh
+new file mode 100644
+index 0000000000..63c562bebd
+--- /dev/null
++++ b/dev-entrypoint.sh
+@@ -0,0 +1,80 @@
++#!/bin/sh
++set -e
++
++# Detect the service context from the WORKDIR or a marker file
++if [ -f /app/package.json ] && [ -f /app/nodemon.json ]; then
++  SERVICE="backend"
++elif [ -f /app/package.json ] && [ -f /app/vite.config.ts ]; then
++  SERVICE="frontend"
++elif [ -f /app/go.mod ]; then
++  SERVICE="backend-go"
++else
++  SERVICE="unknown"
++fi
++echo "[dev-entrypoint] Detected service: ${SERVICE}"
++
++# ---- Dependency installation ----
++install_deps() {
++  if [ -f package.json ]; then
++    if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ]; then
++      echo "[dev-entrypoint] Installing npm dependencies..."
++      npm install
++      echo "[dev-entrypoint] npm install complete"
++    elif [ package.json -nt node_modules/.package-lock.json ]; then
++      echo "[dev-entrypoint] package.json changed, reinstalling dependencies..."
++      npm install
++      echo "[dev-entrypoint] npm install complete"
++    else
++      echo "[dev-entrypoint] Dependencies are up to date"
++    fi
++  fi
++}
++
++# ---- Service-specific setup ----
++setup_backend() {
++  echo "[dev-entrypoint] Running backend setup..."
++
++  update-ca-certificates
++
++  # Initialize SoftHSM token if it doesn't exist
++  if [ ! -f /etc/softhsm2/tokens/auth-app.db ]; then
++    echo "[dev-entrypoint] Initializing SoftHSM token..."
++    mkdir -p /etc/softhsm2/tokens
++    softhsm2-util --init-token --slot 0 --label "auth-app" --pin 1234 --so-pin 0000
++    echo "[dev-entrypoint] SoftHSM token initialized"
++  else
++    echo "[dev-entrypoint] SoftHSM token already exists, skipping initialization"
++  fi
++}
++
++setup_frontend() {
++  echo "[dev-entrypoint] Running frontend setup..."
++}
++
++setup_backend_go() {
++  echo "[dev-entrypoint] Running backend-go setup..."
++}
++
++# Run setup based on service
++case "${SERVICE}" in
++  backend)
++    install_deps
++    setup_backend
++    ;;
++  frontend)
++    install_deps
++    setup_frontend
++    ;;
++  backend-go)
++    setup_backend_go
++    ;;
++  *)
++    echo "[dev-entrypoint] Unknown service, attempting dependency installation..."
++    if [ -f package.json ]; then
++      install_deps
++    fi
++    ;;
++esac
++
++echo "[dev-entrypoint] Starting: $@"
++exec "$@"
+\ No newline at end of file
+diff --git a/docker-compose.dev.yml b/docker-compose.dev.yml
+index 72d76b4dc0..50d9f3c3c7 100644
+--- a/docker-compose.dev.yml
++++ b/docker-compose.dev.yml
+@@ -113,12 +113,26 @@ services:
+       - NODE_ENV=development
+       - DB_CONNECTION_URI=postgres://infisical:infisical@db/infisical?sslmode=disable
+       - TELEMETRY_ENABLED=false
++      # Enable polling-based file watching for Docker bind-mount hot-reload
++      - CHOKIDAR_USEPOLLING=true
++      - CHOKIDAR_INTERVAL=1000
++      - WATCHPACK_POLLING=true
+       # Dev-only: lets the backend accept PingFederate's self-signed cert when testing
+       # OIDC locally via `make up-dev-pingfed`. NEVER set this in production.
+       # - NODE_TLS_REJECT_UNAUTHORIZED=0
+     volumes:
++      # Override the built-in entrypoint with the root-level one for dependency management
++      - ./dev-entrypoint.sh:/app/dev-entrypoint.sh
++      # Source code for hot-reload
+       - ./backend/src:/app/src
+-      - softhsm_tokens:/etc/softhsm2/tokens # SoftHSM tokens are stored in a volume to persist across container restarts
++      # Config files for hot-reload (nodemon watches these indirectly)
++      - ./backend/nodemon.json:/app/nodemon.json
++      - ./backend/tsconfig.json:/app/tsconfig.json
++      - ./backend/tsconfig.dev.json:/app/tsconfig.dev.json
++      - ./backend/package.json:/app/package.json
++      - ./backend/package-lock.json:/app/package-lock.json
++      # SoftHSM tokens are stored in a volume to persist across container restarts
++      - softhsm_tokens:/etc/softhsm2/tokens
+     extra_hosts:
+       - "host.docker.internal:host-gateway"
+       - "pf.local:host-gateway" # PingFederate dev container — resolves the same on host and inside compose
+@@ -173,10 +187,27 @@ services:
+     build:
+       context: ./frontend
+       dockerfile: Dockerfile.dev
++    entrypoint: ["/app/dev-entrypoint.sh"]
++    command: ["npm", "run", "dev"]
++    ports:
++      - 3000:3000
++    environment:
++      - CHOKIDAR_USEPOLLING=true
++      - CHOKIDAR_INTERVAL=1000
++      - WATCHPACK_POLLING=true
++      - VITE_HMR_PROTOCOL=ws
++      - VITE_HMR_HOST=localhost
++      - VITE_HMR_PORT=3000
+     volumes:
+-      - ./frontend/src:/app/src/ # mounted whole src to avoid missing reload on new files
++      - ./dev-entrypoint.sh:/app/dev-entrypoint.sh
++      - ./frontend/src:/app/src
+       - ./frontend/public:/app/public
+       - ./frontend/index.html:/app/index.html
++      - ./frontend/vite.config.ts:/app/vite.config.ts
++      - ./frontend/tsconfig.json:/app/tsconfig.json
++      - ./frontend/tsconfig.app.json:/app/tsconfig.app.json
++      - ./frontend/package.json:/app/package.json
++      - ./frontend/package-lock.json:/app/package-lock.json
+     env_file: .env
+ 
+   backend-go:
+@@ -198,6 +229,7 @@ services:
+     environment:
+       - DB_CONNECTION_URI=postgres://infisical:infisical@db/infisical?sslmode=disable
+       - REDIS_URL=redis://redis:6379
++      - AIR_WATCH_INTERVAL=1s
+     env_file:
+       - .env
+     profiles: [go]
