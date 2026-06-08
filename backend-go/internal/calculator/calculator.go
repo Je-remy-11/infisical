@@ -1,0 +1,431 @@
+package calculator
+
+import (
+	"errors"
+	"fmt"
+)
+
+// TaxType defines the type of tax
+type TaxType string
+
+const (
+	TaxTypeVAT         TaxType = "VAT"
+	TaxTypeIncome      TaxType = "INCOME"
+	TaxTypeSales       TaxType = "SALES"
+	TaxTypeProperty    TaxType = "PROPERTY"
+	TaxTypeExcise      TaxType = "EXCISE"
+	TaxTypeCustoms     TaxType = "CUSTOMS"
+	TaxTypeWithholding TaxType = "WITHHOLDING"
+)
+
+// TaxCalculationRequest contains all necessary parameters for tax calculation
+type TaxCalculationRequest struct {
+	TaxType     TaxType
+	Amount      float64
+	Region      string
+	TaxBracket  int
+	IsBusiness  bool
+	Exemptions  float64
+	Deductions  float64
+}
+
+// TaxCalculationResult contains the tax calculation result
+type TaxCalculationResult struct {
+	TaxType     TaxType
+	TaxAmount   float64
+	Breakdown   map[string]float64
+	TotalAmount float64
+}
+
+// TaxStrategy defines the interface for tax calculation strategies
+type TaxStrategy interface {
+	Calculate(request TaxCalculationRequest) (TaxCalculationResult, error)
+	GetTaxType() TaxType
+}
+
+// VATStrategy implements value-added tax calculation
+type VATStrategy struct{}
+
+func (s *VATStrategy) GetTaxType() TaxType {
+	return TaxTypeVAT
+}
+
+func (s *VATStrategy) Calculate(request TaxCalculationRequest) (TaxCalculationResult, error) {
+	breakdown := make(map[string]float64)
+	rate := s.getVATRate(request.Region, request.IsBusiness)
+	
+	taxableAmount := request.Amount - request.Exemptions
+	if taxableAmount < 0 {
+		taxableAmount = 0
+	}
+	
+	taxAmount := taxableAmount * rate
+	
+	breakdown["taxable_amount"] = taxableAmount
+	breakdown["rate"] = rate
+	breakdown["exemptions"] = request.Exemptions
+	
+	return TaxCalculationResult{
+		TaxType:     TaxTypeVAT,
+		TaxAmount:   taxAmount,
+		Breakdown:   breakdown,
+		TotalAmount: request.Amount + taxAmount,
+	}, nil
+}
+
+func (s *VATStrategy) getVATRate(region string, isBusiness bool) float64 {
+	switch region {
+	case "US":
+		return 0.07
+	case "EU":
+		return 0.20
+	case "UK":
+		return 0.20
+	case "CN":
+		if isBusiness {
+			return 0.13
+		}
+		return 0.09
+	default:
+		return 0.10
+	}
+}
+
+// IncomeStrategy implements income tax calculation
+type IncomeStrategy struct{}
+
+func (s *IncomeStrategy) GetTaxType() TaxType {
+	return TaxTypeIncome
+}
+
+func (s *IncomeStrategy) Calculate(request TaxCalculationRequest) (TaxCalculationResult, error) {
+	breakdown := make(map[string]float64)
+	
+	taxableIncome := request.Amount - request.Exemptions - request.Deductions
+	if taxableIncome < 0 {
+		taxableIncome = 0
+	}
+	
+	taxBrackets := s.getIncomeTaxBrackets(request.Region)
+	taxAmount := s.calculateBracketTax(taxableIncome, taxBrackets)
+	
+	breakdown["taxable_income"] = taxableIncome
+	breakdown["exemptions"] = request.Exemptions
+	breakdown["deductions"] = request.Deductions
+	
+	return TaxCalculationResult{
+		TaxType:     TaxTypeIncome,
+		TaxAmount:   taxAmount,
+		Breakdown:   breakdown,
+		TotalAmount: taxAmount,
+	}, nil
+}
+
+func (s *IncomeStrategy) getIncomeTaxBrackets(region string) []struct {
+	Limit float64
+	Rate  float64
+} {
+	switch region {
+	case "US":
+		return []struct {
+			Limit float64
+			Rate  float64
+		}{
+			{10000, 0.10},
+			{40000, 0.12},
+			{85000, 0.22},
+			{170000, 0.24},
+			{0, 0.32},
+		}
+	case "CN":
+		return []struct {
+			Limit float64
+			Rate  float64
+		}{
+			{5000, 0.03},
+			{12000, 0.10},
+			{25000, 0.20},
+			{35000, 0.25},
+			{0, 0.30},
+		}
+	default:
+		return []struct {
+			Limit float64
+			Rate  float64
+		}{
+			{10000, 0.10},
+			{0, 0.20},
+		}
+	}
+}
+
+func (s *IncomeStrategy) calculateBracketTax(income float64, brackets []struct {
+	Limit float64
+	Rate  float64
+}) float64 {
+	var tax float64
+	previousLimit := 0.0
+	
+	for i, bracket := range brackets {
+		if bracket.Limit == 0 || income <= bracket.Limit {
+			tax += (income - previousLimit) * bracket.Rate
+			break
+		}
+		
+		tax += (bracket.Limit - previousLimit) * bracket.Rate
+		previousLimit = bracket.Limit
+		
+		if i == len(brackets)-1 && bracket.Limit == 0 {
+			tax += (income - previousLimit) * bracket.Rate
+		}
+	}
+	
+	return tax
+}
+
+// SalesStrategy implements sales tax calculation
+type SalesStrategy struct{}
+
+func (s *SalesStrategy) GetTaxType() TaxType {
+	return TaxTypeSales
+}
+
+func (s *SalesStrategy) Calculate(request TaxCalculationRequest) (TaxCalculationResult, error) {
+	breakdown := make(map[string]float64)
+	rate := s.getSalesRate(request.Region)
+	
+	taxAmount := request.Amount * rate
+	
+	breakdown["taxable_amount"] = request.Amount
+	breakdown["rate"] = rate
+	
+	return TaxCalculationResult{
+		TaxType:     TaxTypeSales,
+		TaxAmount:   taxAmount,
+		Breakdown:   breakdown,
+		TotalAmount: request.Amount + taxAmount,
+	}, nil
+}
+
+func (s *SalesStrategy) getSalesRate(region string) float64 {
+	switch region {
+	case "US":
+		return 0.06
+	case "CA":
+		return 0.05
+	case "AU":
+		return 0.10
+	default:
+		return 0.08
+	}
+}
+
+// PropertyStrategy implements property tax calculation
+type PropertyStrategy struct{}
+
+func (s *PropertyStrategy) GetTaxType() TaxType {
+	return TaxTypeProperty
+}
+
+func (s *PropertyStrategy) Calculate(request TaxCalculationRequest) (TaxCalculationResult, error) {
+	breakdown := make(map[string]float64)
+	rate := s.getPropertyRate(request.Region)
+	
+	taxAmount := request.Amount * rate
+	
+	breakdown["assessed_value"] = request.Amount
+	breakdown["rate"] = rate
+	
+	return TaxCalculationResult{
+		TaxType:     TaxTypeProperty,
+		TaxAmount:   taxAmount,
+		Breakdown:   breakdown,
+		TotalAmount: taxAmount,
+	}, nil
+}
+
+func (s *PropertyStrategy) getPropertyRate(region string) float64 {
+	switch region {
+	case "US":
+		return 0.012
+	case "UK":
+		return 0.008
+	default:
+		return 0.01
+	}
+}
+
+// ExciseStrategy implements excise tax calculation
+type ExciseStrategy struct{}
+
+func (s *ExciseStrategy) GetTaxType() TaxType {
+	return TaxTypeExcise
+}
+
+func (s *ExciseStrategy) Calculate(request TaxCalculationRequest) (TaxCalculationResult, error) {
+	breakdown := make(map[string]float64)
+	rate := s.getExciseRate(request.Region, request.TaxBracket)
+	
+	taxAmount := request.Amount * rate
+	
+	breakdown["taxable_amount"] = request.Amount
+	breakdown["rate"] = rate
+	
+	return TaxCalculationResult{
+		TaxType:     TaxTypeExcise,
+		TaxAmount:   taxAmount,
+		Breakdown:   breakdown,
+		TotalAmount: request.Amount + taxAmount,
+	}, nil
+}
+
+func (s *ExciseStrategy) getExciseRate(region string, bracket int) float64 {
+	baseRate := 0.10
+	switch region {
+	case "US":
+		baseRate = 0.12
+	case "EU":
+		baseRate = 0.18
+	}
+	
+	return baseRate + (float64(bracket) * 0.05)
+}
+
+// CustomsStrategy implements customs duty calculation
+type CustomsStrategy struct{}
+
+func (s *CustomsStrategy) GetTaxType() TaxType {
+	return TaxTypeCustoms
+}
+
+func (s *CustomsStrategy) Calculate(request TaxCalculationRequest) (TaxCalculationResult, error) {
+	breakdown := make(map[string]float64)
+	rate := s.getCustomsRate(request.Region)
+	
+	taxAmount := request.Amount * rate
+	
+	breakdown["declared_value"] = request.Amount
+	breakdown["rate"] = rate
+	
+	return TaxCalculationResult{
+		TaxType:     TaxTypeCustoms,
+		TaxAmount:   taxAmount,
+		Breakdown:   breakdown,
+		TotalAmount: request.Amount + taxAmount,
+	}, nil
+}
+
+func (s *CustomsStrategy) getCustomsRate(region string) float64 {
+	switch region {
+	case "US":
+		return 0.03
+	case "CN":
+		return 0.05
+	default:
+		return 0.04
+	}
+}
+
+// WithholdingStrategy implements withholding tax calculation
+type WithholdingStrategy struct{}
+
+func (s *WithholdingStrategy) GetTaxType() TaxType {
+	return TaxTypeWithholding
+}
+
+func (s *WithholdingStrategy) Calculate(request TaxCalculationRequest) (TaxCalculationResult, error) {
+	breakdown := make(map[string]float64)
+	rate := s.getWithholdingRate(request.Region, request.IsBusiness)
+	
+	taxAmount := request.Amount * rate
+	
+	breakdown["payment_amount"] = request.Amount
+	breakdown["rate"] = rate
+	
+	return TaxCalculationResult{
+		TaxType:     TaxTypeWithholding,
+		TaxAmount:   taxAmount,
+		Breakdown:   breakdown,
+		TotalAmount: request.Amount - taxAmount,
+	}, nil
+}
+
+func (s *WithholdingStrategy) getWithholdingRate(region string, isBusiness bool) float64 {
+	if isBusiness {
+		switch region {
+		case "US":
+			return 0.21
+		case "CN":
+			return 0.25
+		default:
+			return 0.20
+		}
+	}
+	
+	switch region {
+	case "US":
+		return 0.10
+	case "CN":
+		return 0.08
+	default:
+		return 0.10
+	}
+}
+
+// TaxStrategyFactory creates tax strategy instances
+type TaxStrategyFactory struct {
+	strategies map[TaxType]TaxStrategy
+}
+
+func NewTaxStrategyFactory() *TaxStrategyFactory {
+	factory := &TaxStrategyFactory{
+		strategies: make(map[TaxType]TaxStrategy),
+	}
+	
+	factory.RegisterStrategy(&VATStrategy{})
+	factory.RegisterStrategy(&IncomeStrategy{})
+	factory.RegisterStrategy(&SalesStrategy{})
+	factory.RegisterStrategy(&PropertyStrategy{})
+	factory.RegisterStrategy(&ExciseStrategy{})
+	factory.RegisterStrategy(&CustomsStrategy{})
+	factory.RegisterStrategy(&WithholdingStrategy{})
+	
+	return factory
+}
+
+func (f *TaxStrategyFactory) RegisterStrategy(strategy TaxStrategy) {
+	f.strategies[strategy.GetTaxType()] = strategy
+}
+
+func (f *TaxStrategyFactory) GetStrategy(taxType TaxType) (TaxStrategy, error) {
+	strategy, exists := f.strategies[taxType]
+	if !exists {
+		return nil, fmt.Errorf("no strategy found for tax type: %s", taxType)
+	}
+	return strategy, nil
+}
+
+// Calculator is the main tax calculator
+type Calculator struct {
+	factory *TaxStrategyFactory
+}
+
+func NewCalculator() *Calculator {
+	return &Calculator{
+		factory: NewTaxStrategyFactory(),
+	}
+}
+
+// CalculateTax calculates tax based on the request
+func (c *Calculator) CalculateTax(request TaxCalculationRequest) (TaxCalculationResult, error) {
+	if request.Amount < 0 {
+		return TaxCalculationResult{}, errors.New("amount cannot be negative")
+	}
+	
+	strategy, err := c.factory.GetStrategy(request.TaxType)
+	if err != nil {
+		return TaxCalculationResult{}, err
+	}
+	
+	return strategy.Calculate(request)
+}
