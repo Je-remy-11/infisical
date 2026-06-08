@@ -1,0 +1,649 @@
+diff --git a/.env.dev.example b/.env.dev.example
+index fbc3c73063..d8b1e0425e 100644
+--- a/.env.dev.example
++++ b/.env.dev.example
+@@ -24,7 +24,6 @@ REDIS_URL=redis://redis:6379
+ SITE_URL=http://localhost:8080
+ 
+ # Mail/SMTP
+-
+ SMTP_HOST=host.docker.internal
+ SMTP_PORT=1025
+ SMTP_FROM_ADDRESS=dev@infisical.local
+@@ -94,7 +93,6 @@ SSL_CLIENT_CERTIFICATE_HEADER_KEY=
+ ENABLE_MSSQL_SECRET_ROTATION_ENCRYPT=true
+ 
+ # App Connections
+-
+ # aws assume-role connection
+ INF_APP_CONNECTION_AWS_ACCESS_KEY_ID=
+ INF_APP_CONNECTION_AWS_SECRET_ACCESS_KEY=
+@@ -103,18 +101,18 @@ INF_APP_CONNECTION_AWS_SECRET_ACCESS_KEY=
+ INF_APP_CONNECTION_GITHUB_OAUTH_CLIENT_ID=
+ INF_APP_CONNECTION_GITHUB_OAUTH_CLIENT_SECRET=
+ 
+-#github app connection
++# github app connection
+ INF_APP_CONNECTION_GITHUB_APP_CLIENT_ID=
+ INF_APP_CONNECTION_GITHUB_APP_CLIENT_SECRET=
+ INF_APP_CONNECTION_GITHUB_APP_PRIVATE_KEY=
+ INF_APP_CONNECTION_GITHUB_APP_SLUG=
+ INF_APP_CONNECTION_GITHUB_APP_ID=
+ 
+-#gitlab app connection
++# gitlab app connection
+ INF_APP_CONNECTION_GITLAB_OAUTH_CLIENT_ID=
+ INF_APP_CONNECTION_GITLAB_OAUTH_CLIENT_SECRET=
+ 
+-#github radar app connection
++# github radar app connection
+ INF_APP_CONNECTION_GITHUB_RADAR_APP_CLIENT_ID=
+ INF_APP_CONNECTION_GITHUB_RADAR_APP_CLIENT_SECRET=
+ INF_APP_CONNECTION_GITHUB_RADAR_APP_PRIVATE_KEY=
+@@ -122,7 +120,7 @@ INF_APP_CONNECTION_GITHUB_RADAR_APP_SLUG=
+ INF_APP_CONNECTION_GITHUB_RADAR_APP_ID=
+ INF_APP_CONNECTION_GITHUB_RADAR_APP_WEBHOOK_SECRET=
+ 
+-#gcp app connection
++# gcp app connection
+ INF_APP_CONNECTION_GCP_SERVICE_ACCOUNT_CREDENTIAL=
+ 
+ # azure app connections
+@@ -151,3 +149,71 @@ DATADOG_HOSTNAME=
+ 
+ # kubernetes
+ KUBERNETES_AUTO_FETCH_SERVICE_ACCOUNT_TOKEN=false
++
++# ========== Development Environment Port Configuration ==========
++# These ports are used in docker-compose.dev.yml and can be customized
++# If you change these, make sure the ports are available on your system
++
++# Main Services
++NGINX_PORT=8080                    # Main web interface (via Nginx)
++BACKEND_PORT=4000                  # Backend API
++FRONTEND_PORT=3000                 # Frontend Vite dev server
++
++# Database
++DB_PORT=5432                       # Postgres database
++DB_TEST_PORT=5430                  # Test database
++
++# Redis & Tools
++REDIS_PORT=6379                    # Redis cache
++REDIS_COMMANDER_PORT=8085          # Redis web UI
++BULL_BOARD_PORT=3008               # Bull queue dashboard
++
++# ClickHouse
++CLICKHOUSE_HTTP_PORT=8123          # ClickHouse HTTP interface
++CLICKHOUSE_TCP_PORT=9000           # ClickHouse TCP interface
++
++# Observability
++PROMETHEUS_PORT=9090               # Prometheus metrics
++GRAFANA_PORT=3005                  # Grafana dashboard
++
++# OTEL Collector
++OTEL_PORT=9464                     # OTEL Prometheus endpoint
++OTEL_PPROF_PORT=1888               # OTEL pprof
++OTEL_METRICS_PORT=8888             # OTEL Prometheus metrics
++OTEL_EXPORTER_PORT=8889            # OTEL exporter
++OTEL_HEALTH_PORT=13133             # OTEL health check
++OTEL_GRPC_PORT=4317                # OTEL gRPC
++OTEL_HTTP_PORT=4318                # OTEL HTTP
++OTEL_ZPAGES_PORT=55679             # OTEL zpages
++
++# Backend Go
++BACKEND_GO_PORT=4040               # Go backend API
++
++# Debugging
++BACKEND_DEBUG_PORT=9229            # Node.js debugger
++
++# Database Tools
++PGADMIN_PORT=5050                  # pgAdmin web UI
++
++# Email Testing
++SMTP_PORT=1025                     # MailHog SMTP server
++SMTP_WEB_PORT=8025                 # MailHog web UI
++
++# LDAP / Active Directory
++LDAP_PORT=389                      # OpenLDAP
++LDAPS_PORT=636                     # OpenLDAPS (LDAP over TLS)
++PHPLDAPADMIN_PORT=6433             # phpLDAPadmin web UI
++SAMBA_LDAP_PORT=1389               # Samba AD LDAP
++SAMBA_LDAPS_PORT=1636              # Samba AD LDAPS
++SAMBA_KERBEROS_PORT=88             # Samba AD Kerberos
++SAMBA_KERBEROS_UDP_PORT=88         # Samba AD Kerberos UDP
++
++# SSO / Identity Providers
++KEYCLOAK_PORT=8088                 # Keycloak
++PINGFEDERATE_ADMIN_PORT=9999       # PingFederate admin console
++PINGFEDERATE_RUNTIME_PORT=9031     # PingFederate runtime
++
++# Vite Configuration for Hot Module Replacement (HMR)
++# These settings help with frontend hot-reload in Docker
++VITE_ALLOWED_HOSTS=*
++CHOKIDAR_USEPOLLING=true
+diff --git a/DEV_SETUP.md b/DEV_SETUP.md
+new file mode 100644
+index 0000000000..d400a01cc0
+--- /dev/null
++++ b/DEV_SETUP.md
+@@ -0,0 +1,107 @@
++# Infisical Development Environment Setup
++
++This document explains how to use the improved development environment with hot-reloading capabilities.
++
++## Quick Start
++
++### Using Docker Compose (Recommended)
++
++1. Copy the development environment example:
++   ```bash
++   cp .env.dev.example .env
++   ```
++
++2. Start the development environment:
++   ```bash
++   docker-compose -f docker-compose.dev.yml up --build
++   ```
++
++3. Access the application:
++   - Web UI: http://localhost:8080
++   - Backend API: http://localhost:4000
++   - Frontend dev server: http://localhost:3000
++
++### Using Local Development Script
++
++If you prefer to run services locally:
++
++```bash
++# Make the script executable
++chmod +x dev-entrypoint.sh
++
++# Install dependencies and start both backend and frontend
++./dev-entrypoint.sh all
++
++# Or start only backend
++./dev-entrypoint.sh backend
++
++# Or start only frontend
++./dev-entrypoint.sh frontend
++
++# Just install dependencies
++./dev-entrypoint.sh install
++```
++
++## Features
++
++### Hot Reloading
++
++- **Backend**: Uses Nodemon to watch for changes in `backend/src/` and automatically restarts
++- **Frontend**: Uses Vite's built-in HMR (Hot Module Replacement) for instant updates
++- **Volumes**: Source code is mounted with `:cached` flag for better performance
++
++### Customizable Ports
++
++All ports can be customized in your `.env` file. See `.env.dev.example` for all available options.
++
++Key ports (default values):
++- `NGINX_PORT=8080` - Main web interface
++- `BACKEND_PORT=4000` - Backend API
++- `FRONTEND_PORT=3000` - Frontend dev server
++- `DB_PORT=5432` - Postgres database
++- `REDIS_PORT=6379` - Redis cache
++
++## Docker Compose Services
++
++The `docker-compose.dev.yml` includes:
++- **nginx**: Reverse proxy
++- **db**: Postgres database
++- **redis**: Redis cache
++- **clickhouse**: Analytics database
++- **backend**: Node.js API with hot-reload
++- **frontend**: Vite dev server with HMR
++- **pgadmin**: Database management UI
++- **smtp-server**: MailHog for email testing
++- And more optional services (LDAP, Keycloak, etc.)
++
++## Development Workflow
++
++1. Make changes to backend code in `backend/src/`
++2. Changes are automatically picked up by Nodemon
++3. Make changes to frontend code in `frontend/src/`
++4. Vite HMR updates the browser instantly
++5. Test your changes at http://localhost:8080
++
++## Troubleshooting
++
++### Frontend not reloading
++- Ensure `CHOKIDAR_USEPOLLING=true` is set in your `.env`
++- Check that Docker volume mounts are working correctly
++
++### Backend not restarting
++- Verify `nodemon.json` is properly mounted
++- Check backend logs for errors
++
++### Port conflicts
++- Modify the port mappings in your `.env` file
++- Ensure no other services are using the ports
++
++## Dev Entrypoint Script Commands
++
++The `dev-entrypoint.sh` script provides:
++- `install` - Install all dependencies
++- `install-backend` - Install only backend dependencies
++- `install-frontend` - Install only frontend dependencies
++- `backend` - Start backend in dev mode
++- `frontend` - Start frontend in dev mode
++- `all` - Start both (default)
+diff --git a/dev-entrypoint.sh b/dev-entrypoint.sh
+new file mode 100644
+index 0000000000..2aea8b99e3
+--- /dev/null
++++ b/dev-entrypoint.sh
+@@ -0,0 +1,112 @@
++#!/bin/bash
++# Development entrypoint script for Infisical
++# This script handles dependency installation and starts services in dev mode
++
++set -e
++
++# Function to log messages
++log() {
++    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
++}
++
++# Check if we're in the right directory
++if [ ! -d "backend" ] || [ ! -d "frontend" ]; then
++    log "Error: This script must be run from the Infisical project root directory"
++    exit 1
++fi
++
++# Function to install backend dependencies
++install_backend_deps() {
++    log "Installing backend dependencies..."
++    cd backend
++    if [ ! -d "node_modules" ] || [ "package.json" -nt "node_modules" ]; then
++        npm install
++    else
++        log "Backend dependencies are up to date"
++    fi
++    cd ..
++}
++
++# Function to install frontend dependencies
++install_frontend_deps() {
++    log "Installing frontend dependencies..."
++    cd frontend
++    if [ ! -d "node_modules" ] || [ "package.json" -nt "node_modules" ]; then
++        npm install
++    else
++        log "Frontend dependencies are up to date"
++    fi
++    cd ..
++}
++
++# Function to start backend in dev mode
++start_backend_dev() {
++    log "Starting backend in development mode..."
++    cd backend
++    npm run dev &
++    BACKEND_PID=$!
++    cd ..
++    log "Backend started with PID $BACKEND_PID"
++}
++
++# Function to start frontend in dev mode
++start_frontend_dev() {
++    log "Starting frontend in development mode..."
++    cd frontend
++    npm run dev &
++    FRONTEND_PID=$!
++    cd ..
++    log "Frontend started with PID $FRONTEND_PID"
++}
++
++# Function to wait for services
++wait_for_services() {
++    log "Waiting for services to start..."
++    wait
++}
++
++# Main logic
++case "${1:-all}" in
++    "install")
++        log "Installing all dependencies..."
++        install_backend_deps
++        install_frontend_deps
++        log "Dependencies installed successfully"
++        ;;
++    "install-backend")
++        install_backend_deps
++        ;;
++    "install-frontend")
++        install_frontend_deps
++        ;;
++    "backend")
++        install_backend_deps
++        start_backend_dev
++        wait_for_services
++        ;;
++    "frontend")
++        install_frontend_deps
++        start_frontend_dev
++        wait_for_services
++        ;;
++    "all")
++        log "Starting full development environment..."
++        install_backend_deps
++        install_frontend_deps
++        start_backend_dev
++        start_frontend_dev
++        wait_for_services
++        ;;
++    *)
++        echo "Usage: $0 [install|install-backend|install-frontend|backend|frontend|all]"
++        echo ""
++        echo "Commands:"
++        echo "  install          - Install all dependencies"
++        echo "  install-backend  - Install only backend dependencies"
++        echo "  install-frontend - Install only frontend dependencies"
++        echo "  backend          - Start backend in dev mode"
++        echo "  frontend         - Start frontend in dev mode"
++        echo "  all              - Start both backend and frontend (default)"
++        exit 1
++        ;;
++esac
+diff --git a/docker-compose.dev.yml b/docker-compose.dev.yml
+index 72d76b4dc0..7cec037463 100644
+--- a/docker-compose.dev.yml
++++ b/docker-compose.dev.yml
+@@ -6,7 +6,7 @@ services:
+     image: nginx
+     restart: "always"
+     ports:
+-      - 8080:80
++      - ${NGINX_PORT:-8080}:80
+     volumes:
+       - ./nginx/default.dev.conf:/etc/nginx/conf.d/default.conf:ro
+     depends_on:
+@@ -16,7 +16,7 @@ services:
+   db:
+     image: postgres:14-alpine
+     ports:
+-      - "5432:5432"
++      - "${DB_PORT:-5432}:5432"
+     volumes:
+       - postgres-data:/var/lib/postgresql/data
+     environment:
+@@ -30,7 +30,7 @@ services:
+     environment:
+       - ALLOW_EMPTY_PASSWORD=yes
+     ports:
+-      - 6379:6379
++      - "${REDIS_PORT:-6379}:6379"
+     volumes:
+       - redis_data:/data
+ 
+@@ -39,8 +39,8 @@ services:
+     container_name: infisical-dev-clickhouse
+     restart: unless-stopped
+     ports:
+-      - "8123:8123"
+-      - "9000:9000"
++      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
++      - "${CLICKHOUSE_TCP_PORT:-9000}:9000"
+     volumes:
+       - clickhouse_data:/var/lib/clickhouse
+       - clickhouse_logs:/var/log/clickhouse-server
+@@ -63,7 +63,7 @@ services:
+     environment:
+       - REDIS_HOSTS=local:redis:6379
+     ports:
+-      - "8085:8081"
++      - "${REDIS_COMMANDER_PORT:-8085}:8081"
+ 
+   bull-board:
+     container_name: infisical-dev-bull-board
+@@ -77,14 +77,14 @@ services:
+       - BULL_VERSION=BULLMQ
+       - BULL_PREFIX=bull
+     ports:
+-      - "3008:3000"
++      - "${BULL_BOARD_PORT:-3008}:3000"
+     profiles: [queue]
+ 
+   db-test:
+     profiles: ["test"]
+     image: postgres:14-alpine
+     ports:
+-      - "5430:5432"
++      - "${DB_TEST_PORT:-5430}:5432"
+     environment:
+       POSTGRES_PASSWORD: infisical
+       POSTGRES_USER: infisical
+@@ -106,22 +106,21 @@ services:
+     env_file:
+       - .env
+     ports:
+-      - 4000:4000
+-      - 9464:9464 # for OTEL collection of Prometheus metrics
+-      - 9229:9229 # For debugger access
++      - "${BACKEND_PORT:-4000}:4000"
++      - "${OTEL_PORT:-9464}:9464"
++      - "${BACKEND_DEBUG_PORT:-9229}:9229"
+     environment:
+       - NODE_ENV=development
+       - DB_CONNECTION_URI=postgres://infisical:infisical@db/infisical?sslmode=disable
+       - TELEMETRY_ENABLED=false
+-      # Dev-only: lets the backend accept PingFederate's self-signed cert when testing
+-      # OIDC locally via `make up-dev-pingfed`. NEVER set this in production.
+-      # - NODE_TLS_REJECT_UNAUTHORIZED=0
+     volumes:
+-      - ./backend/src:/app/src
+-      - softhsm_tokens:/etc/softhsm2/tokens # SoftHSM tokens are stored in a volume to persist across container restarts
++      - ./backend/src:/app/src:cached
++      - ./backend/nodemon.json:/app/nodemon.json:cached
++      - ./backend/tsconfig.dev.json:/app/tsconfig.dev.json:cached
++      - softhsm_tokens:/etc/softhsm2/tokens
+     extra_hosts:
+       - "host.docker.internal:host-gateway"
+-      - "pf.local:host-gateway" # PingFederate dev container — resolves the same on host and inside compose
++      - "pf.local:host-gateway"
+     healthcheck:
+       test: ["CMD", "curl", "-f", "http://localhost:4000/api/status"]
+       interval: 30s
+@@ -134,7 +133,7 @@ services:
+     volumes:
+       - ./prometheus.dev.yml:/etc/prometheus/prometheus.yml
+     ports:
+-      - "9090:9090"
++      - "${PROMETHEUS_PORT:-9090}:9090"
+     command:
+       - "--config.file=/etc/prometheus/prometheus.yml"
+     profiles: [metrics]
+@@ -144,13 +143,13 @@ services:
+     volumes:
+       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+     ports:
+-      - 1888:1888 # pprof extension
+-      - 8888:8888 # Prometheus metrics exposed by the Collector
+-      - 8889:8889 # Prometheus exporter metrics
+-      - 13133:13133 # health_check extension
+-      - 4317:4317 # OTLP gRPC receiver
+-      - 4318:4318 # OTLP http receiver
+-      - 55679:55679 # zpages extension
++      - "${OTEL_PPROF_PORT:-1888}:1888"
++      - "${OTEL_METRICS_PORT:-8888}:8888"
++      - "${OTEL_EXPORTER_PORT:-8889}:8889"
++      - "${OTEL_HEALTH_PORT:-13133}:13133"
++      - "${OTEL_GRPC_PORT:-4317}:4317"
++      - "${OTEL_HTTP_PORT:-4318}:4318"
++      - "${OTEL_ZPAGES_PORT:-55679}:55679"
+     profiles: [metrics-otel]
+ 
+   grafana:
+@@ -160,7 +159,7 @@ services:
+     environment:
+       - GF_LOG_LEVEL=debug
+     ports:
+-      - "3005:3000"
++      - "${GRAFANA_PORT:-3005}:3000"
+     volumes:
+       - "grafana_storage:/var/lib/grafana"
+     profiles: [metrics]
+@@ -173,10 +172,18 @@ services:
+     build:
+       context: ./frontend
+       dockerfile: Dockerfile.dev
++    ports:
++      - "${FRONTEND_PORT:-3000}:3000"
+     volumes:
+-      - ./frontend/src:/app/src/ # mounted whole src to avoid missing reload on new files
+-      - ./frontend/public:/app/public
+-      - ./frontend/index.html:/app/index.html
++      - ./frontend/src:/app/src:cached
++      - ./frontend/public:/app/public:cached
++      - ./frontend/index.html:/app/index.html:cached
++      - ./frontend/vite.config.ts:/app/vite.config.ts:cached
++      - ./frontend/tsconfig.json:/app/tsconfig.json:cached
++      - frontend-node-modules:/app/node_modules
++    environment:
++      - CHOKIDAR_USEPOLLING=true
++      - VITE_ALLOWED_HOSTS=*
+     env_file: .env
+ 
+   backend-go:
+@@ -192,9 +199,9 @@ services:
+       backend:
+         condition: service_healthy
+     ports:
+-      - 4040:4040
++      - "${BACKEND_GO_PORT:-4040}:4040"
+     volumes:
+-      - ./backend-go:/app
++      - ./backend-go:/app:cached
+     environment:
+       - DB_CONNECTION_URI=postgres://infisical:infisical@db/infisical?sslmode=disable
+       - REDIS_URL=redis://redis:6379
+@@ -211,22 +218,21 @@ services:
+       PGADMIN_DEFAULT_EMAIL: admin@example.com
+       PGADMIN_DEFAULT_PASSWORD: pass
+     ports:
+-      - 5050:80
++      - "${PGADMIN_PORT:-5050}:80"
+     depends_on:
+       - db
+ 
+   smtp-server:
+     container_name: infisical-dev-smtp-server
+-    image: lytrax/mailhog:latest # https://github.com/mailhog/MailHog/issues/353#issuecomment-821137362
++    image: lytrax/mailhog:latest
+     restart: always
+     logging:
+-      driver: "none" # disable saving logs
++      driver: "none"
+     ports:
+-      - 1025:1025 # SMTP server
+-      - 8025:8025 # Web UI
++      - "${SMTP_PORT:-1025}:1025"
++      - "${SMTP_WEB_PORT:-8025}:8025"
+ 
+   openldap:
+-    # note: more advanced configuration is available
+     image: osixia/openldap:1.5.0
+     restart: always
+     environment:
+@@ -234,22 +240,21 @@ services:
+       LDAP_DOMAIN: acme.com
+       LDAP_ADMIN_PASSWORD: admin
+     ports:
+-      - 389:389
+-      - 636:636
++      - "${LDAP_PORT:-389}:389"
++      - "${LDAPS_PORT:-636}:636"
+     volumes:
+       - ldap_data:/var/lib/ldap
+       - ldap_config:/etc/ldap/slapd.d
+     profiles: [ldap]
+ 
+   phpldapadmin:
+-    # username: cn=admin,dc=acme,dc=com, pass is admin
+     image: osixia/phpldapadmin:latest
+     restart: always
+     environment:
+       - PHPLDAPADMIN_LDAP_HOSTS=openldap
+       - PHPLDAPADMIN_HTTPS=false
+     ports:
+-      - 6433:80
++      - "${PHPLDAPADMIN_PORT:-6433}:80"
+     depends_on:
+       - openldap
+     profiles: [ldap]
+@@ -262,17 +267,10 @@ services:
+       - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+     command: start-dev
+     ports:
+-      - 8088:8080
++      - "${KEYCLOAK_PORT:-8088}:8080"
+     profiles: [sso]
+ 
+   pingfederate:
+-    # Requires free Ping Identity DevOps credentials — register at
+-    # https://devops.pingidentity.com/how-to/devopsRegistration/
+-    # then set PING_IDENTITY_DEVOPS_USER and PING_IDENTITY_DEVOPS_KEY in your .env.
+-    # Alternatively, leave both unset to run in Trial Product mode using the
+-    # bundled license from pingidentity-server-profiles (expires periodically).
+-    # Admin console: https://localhost:9999/pingfederate (administrator / 2FederateM0re)
+-    # Runtime endpoint (SAML/OIDC/SCIM): https://localhost:9031
+     image: pingidentity/pingfederate:2604
+     restart: always
+     environment:
+@@ -281,12 +279,10 @@ services:
+       - PING_IDENTITY_DEVOPS_KEY=${PING_IDENTITY_DEVOPS_KEY}
+       - SERVER_PROFILE_URL=https://github.com/pingidentity/pingidentity-server-profiles.git
+       - SERVER_PROFILE_PATH=getting-started/pingfederate
+-      # Enable Outbound Provisioning runtime for SCIM testing.
+-      # Maps to pf.provisioner.mode in run.properties. STANDALONE = single node.
+       - PF_PROVISIONER_MODE=STANDALONE
+     ports:
+-      - 9999:9999 # admin console
+-      - 9031:9031 # runtime (SAML/OIDC/SCIM)
++      - "${PINGFEDERATE_ADMIN_PORT:-9999}:9999"
++      - "${PINGFEDERATE_RUNTIME_PORT:-9031}:9031"
+     volumes:
+       - pingfederate_data:/opt/out
+     extra_hosts:
+@@ -294,10 +290,6 @@ services:
+     profiles: [pingfed]
+ 
+   samba-ad:
+-    # Samba 4 Active Directory Domain Controller for SCIM/SSO testing.
+-    # Bootstraps an ACME.LOCAL domain on first start (~60s).
+-    # Admin: Administrator / value of SAMBA_ADMIN_PASSWORD (defaults to Passw0rd!).
+-    # Reachable from compose network at samba-ad:389; from host at localhost:1389.
+     image: nowsci/samba-domain:latest
+     container_name: infisical-dev-samba-ad
+     hostname: dc1
+@@ -310,12 +302,12 @@ services:
+       - DOMAINPASS=${SAMBA_ADMIN_PASSWORD:-Passw0rd!}
+       - DNSFORWARDER=8.8.8.8
+       - HOSTIP=0.0.0.0
+-      - INSECURELDAP=true # dev only — allows ldap:// without TLS
++      - INSECURELDAP=true
+     ports:
+-      - 1389:389 # ldap (mapped off 389 to coexist with the openldap profile)
+-      - 1636:636 # ldaps
+-      - 88:88 # kerberos
+-      - 88:88/udp
++      - "${SAMBA_LDAP_PORT:-1389}:389"
++      - "${SAMBA_LDAPS_PORT:-1636}:636"
++      - "${SAMBA_KERBEROS_PORT:-88}:88"
++      - "${SAMBA_KERBEROS_UDP_PORT:-88}:88/udp"
+     volumes:
+       - samba_data:/var/lib/samba
+       - samba_etc:/etc/samba/external
+@@ -338,3 +330,4 @@ volumes:
+   grafana_storage:
+   softhsm_tokens:
+     driver: local
++  frontend-node-modules:
+\ No newline at end of file
