@@ -1,0 +1,950 @@
+diff --git a/order-system/pom.xml b/order-system/pom.xml
+new file mode 100644
+index 0000000000..6272ff58fe
+--- /dev/null
++++ b/order-system/pom.xml
+@@ -0,0 +1,96 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project xmlns="http://maven.apache.org/POM/4.0.0"
++         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
++    <modelVersion>4.0.0</modelVersion>
++
++    <groupId>com.ordersystem</groupId>
++    <artifactId>order-system</artifactId>
++    <version>1.0.0-SNAPSHOT</version>
++    <packaging>jar</packaging>
++
++    <name>Order System</name>
++    <description>Order management system with auto-cancel timeout feature</description>
++
++    <parent>
++        <groupId>org.springframework.boot</groupId>
++        <artifactId>spring-boot-starter-parent</artifactId>
++        <version>3.2.0</version>
++        <relativePath/>
++    </parent>
++
++    <properties>
++        <java.version>17</java.version>
++        <maven.compiler.source>17</maven.compiler.source>
++        <maven.compiler.target>17</maven.compiler.target>
++        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
++    </properties>
++
++    <dependencies>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-web</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-data-jpa</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-validation</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.retry</groupId>
++            <artifactId>spring-retry</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-aop</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.flywaydb</groupId>
++            <artifactId>flyway-core</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.flywaydb</groupId>
++            <artifactId>flyway-database-postgresql</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.postgresql</groupId>
++            <artifactId>postgresql</artifactId>
++            <scope>runtime</scope>
++        </dependency>
++        <dependency>
++            <groupId>com.h2database</groupId>
++            <artifactId>h2</artifactId>
++            <scope>test</scope>
++        </dependency>
++        <dependency>
++            <groupId>org.projectlombok</groupId>
++            <artifactId>lombok</artifactId>
++            <optional>true</optional>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-test</artifactId>
++            <scope>test</scope>
++        </dependency>
++    </dependencies>
++
++    <build>
++        <plugins>
++            <plugin>
++                <groupId>org.springframework.boot</groupId>
++                <artifactId>spring-boot-maven-plugin</artifactId>
++                <configuration>
++                    <excludes>
++                        <exclude>
++                            <groupId>org.projectlombok</groupId>
++                            <artifactId>lombok</artifactId>
++                        </exclude>
++                    </excludes>
++                </configuration>
++            </plugin>
++        </plugins>
++    </build>
++</project>
+diff --git a/order-system/src/main/java/com/ordersystem/OrderSystemApplication.java b/order-system/src/main/java/com/ordersystem/OrderSystemApplication.java
+new file mode 100644
+index 0000000000..e0b2470d7a
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/OrderSystemApplication.java
+@@ -0,0 +1,16 @@
++package com.ordersystem;
++
++import org.springframework.boot.SpringApplication;
++import org.springframework.boot.autoconfigure.SpringBootApplication;
++import org.springframework.scheduling.annotation.EnableScheduling;
++import org.springframework.retry.annotation.EnableRetry;
++
++@SpringBootApplication
++@EnableScheduling
++@EnableRetry
++public class OrderSystemApplication {
++
++    public static void main(String[] args) {
++        SpringApplication.run(OrderSystemApplication.class, args);
++    }
++}
+diff --git a/order-system/src/main/java/com/ordersystem/config/SchedulingConfig.java b/order-system/src/main/java/com/ordersystem/config/SchedulingConfig.java
+new file mode 100644
+index 0000000000..706d3475a5
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/config/SchedulingConfig.java
+@@ -0,0 +1,9 @@
++package com.ordersystem.config;
++
++import org.springframework.context.annotation.Configuration;
++import org.springframework.scheduling.annotation.EnableScheduling;
++
++@Configuration
++@EnableScheduling
++public class SchedulingConfig {
++}
+diff --git a/order-system/src/main/java/com/ordersystem/controller/OrderController.java b/order-system/src/main/java/com/ordersystem/controller/OrderController.java
+new file mode 100644
+index 0000000000..ea9c7c6f1b
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/controller/OrderController.java
+@@ -0,0 +1,57 @@
++package com.ordersystem.controller;
++
++import com.ordersystem.entity.dto.CreateOrderRequest;
++import com.ordersystem.entity.dto.OrderResponse;
++import com.ordersystem.service.OrderService;
++import jakarta.validation.Valid;
++import lombok.RequiredArgsConstructor;
++import org.springframework.http.ResponseEntity;
++import org.springframework.web.bind.annotation.*;
++
++import java.util.List;
++
++@RestController
++@RequestMapping("/api/orders")
++@RequiredArgsConstructor
++public class OrderController {
++
++    private final OrderService orderService;
++
++    @PostMapping
++    public ResponseEntity<OrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest request) {
++        OrderResponse response = orderService.createOrder(request);
++        return ResponseEntity.ok(response);
++    }
++
++    @GetMapping("/{id}")
++    public ResponseEntity<OrderResponse> getOrderById(@PathVariable Long id) {
++        OrderResponse response = orderService.getOrderById(id);
++        if (response == null) {
++            return ResponseEntity.notFound().build();
++        }
++        return ResponseEntity.ok(response);
++    }
++
++    @GetMapping("/no/{orderNo}")
++    public ResponseEntity<OrderResponse> getOrderByOrderNo(@PathVariable String orderNo) {
++        OrderResponse response = orderService.getOrderByOrderNo(orderNo);
++        if (response == null) {
++            return ResponseEntity.notFound().build();
++        }
++        return ResponseEntity.ok(response);
++    }
++
++    @GetMapping
++    public ResponseEntity<List<OrderResponse>> getAllOrders() {
++        return ResponseEntity.ok(orderService.getAllOrders());
++    }
++
++    @PutMapping("/{id}/cancel")
++    public ResponseEntity<Void> cancelOrder(@PathVariable Long id) {
++        boolean success = orderService.cancelOrder(id);
++        if (!success) {
++            return ResponseEntity.badRequest().build();
++        }
++        return ResponseEntity.ok().build();
++    }
++}
+diff --git a/order-system/src/main/java/com/ordersystem/entity/Order.java b/order-system/src/main/java/com/ordersystem/entity/Order.java
+new file mode 100644
+index 0000000000..e1bd83c8e4
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/entity/Order.java
+@@ -0,0 +1,66 @@
++package com.ordersystem.entity;
++
++import jakarta.persistence.*;
++import lombok.AllArgsConstructor;
++import lombok.Builder;
++import lombok.Data;
++import lombok.NoArgsConstructor;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++
++@Entity
++@Table(name = "orders")
++@Data
++@Builder
++@NoArgsConstructor
++@AllArgsConstructor
++public class Order {
++
++    @Id
++    @GeneratedValue(strategy = GenerationType.IDENTITY)
++    private Long id;
++
++    @Column(name = "order_no", unique = true, nullable = false, length = 64)
++    private String orderNo;
++
++    @Column(name = "user_id", nullable = false)
++    private Long userId;
++
++    @Column(name = "amount", nullable = false, precision = 19, scale = 2)
++    private BigDecimal amount;
++
++    @Enumerated(EnumType.STRING)
++    @Column(name = "status", nullable = false, length = 20)
++    private OrderStatus status;
++
++    @Column(name = "timeout_at", nullable = false)
++    private LocalDateTime timeoutAt;
++
++    @Column(name = "cancelled_at")
++    private LocalDateTime cancelledAt;
++
++    @Column(name = "created_at", nullable = false)
++    private LocalDateTime createdAt;
++
++    @Column(name = "updated_at", nullable = false)
++    private LocalDateTime updatedAt;
++
++    @Version
++    @Column(name = "version")
++    private Long version;
++
++    @PrePersist
++    protected void onCreate() {
++        createdAt = LocalDateTime.now();
++        updatedAt = LocalDateTime.now();
++        if (timeoutAt == null) {
++            timeoutAt = createdAt.plusMinutes(30);
++        }
++    }
++
++    @PreUpdate
++    protected void onUpdate() {
++        updatedAt = LocalDateTime.now();
++    }
++}
+diff --git a/order-system/src/main/java/com/ordersystem/entity/OrderStatus.java b/order-system/src/main/java/com/ordersystem/entity/OrderStatus.java
+new file mode 100644
+index 0000000000..a4e032ee34
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/entity/OrderStatus.java
+@@ -0,0 +1,8 @@
++package com.ordersystem.entity;
++
++public enum OrderStatus {
++    PENDING,
++    PAID,
++    CANCELLED,
++    COMPLETED
++}
+diff --git a/order-system/src/main/java/com/ordersystem/entity/dto/CreateOrderRequest.java b/order-system/src/main/java/com/ordersystem/entity/dto/CreateOrderRequest.java
+new file mode 100644
+index 0000000000..f24d12d01d
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/entity/dto/CreateOrderRequest.java
+@@ -0,0 +1,24 @@
++package com.ordersystem.entity.dto;
++
++import jakarta.validation.constraints.DecimalMin;
++import jakarta.validation.constraints.NotNull;
++import lombok.AllArgsConstructor;
++import lombok.Builder;
++import lombok.Data;
++import lombok.NoArgsConstructor;
++
++import java.math.BigDecimal;
++
++@Data
++@Builder
++@NoArgsConstructor
++@AllArgsConstructor
++public class CreateOrderRequest {
++
++    @NotNull(message = "用户ID不能为空")
++    private Long userId;
++
++    @NotNull(message = "订单金额不能为空")
++    @DecimalMin(value = "0.01", message = "订单金额必须大于0")
++    private BigDecimal amount;
++}
+diff --git a/order-system/src/main/java/com/ordersystem/entity/dto/OrderResponse.java b/order-system/src/main/java/com/ordersystem/entity/dto/OrderResponse.java
+new file mode 100644
+index 0000000000..e8ffc38658
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/entity/dto/OrderResponse.java
+@@ -0,0 +1,27 @@
++package com.ordersystem.entity.dto;
++
++import com.ordersystem.entity.OrderStatus;
++import lombok.AllArgsConstructor;
++import lombok.Builder;
++import lombok.Data;
++import lombok.NoArgsConstructor;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++
++@Data
++@Builder
++@NoArgsConstructor
++@AllArgsConstructor
++public class OrderResponse {
++
++    private Long id;
++    private String orderNo;
++    private Long userId;
++    private BigDecimal amount;
++    private OrderStatus status;
++    private LocalDateTime timeoutAt;
++    private LocalDateTime cancelledAt;
++    private LocalDateTime createdAt;
++    private LocalDateTime updatedAt;
++}
+diff --git a/order-system/src/main/java/com/ordersystem/repository/OrderRepository.java b/order-system/src/main/java/com/ordersystem/repository/OrderRepository.java
+new file mode 100644
+index 0000000000..d0b88da33a
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/repository/OrderRepository.java
+@@ -0,0 +1,28 @@
++package com.ordersystem.repository;
++
++import com.ordersystem.entity.Order;
++import com.ordersystem.entity.OrderStatus;
++import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
++import org.springframework.data.jpa.repository.Lock;
++import org.springframework.data.jpa.repository.Query;
++import org.springframework.data.repository.query.Param;
++import org.springframework.stereotype.Repository;
++
++import jakarta.persistence.LockModeType;
++import java.time.LocalDateTime;
++import java.util.List;
++import java.util.Optional;
++
++@Repository
++public interface OrderRepository extends JpaRepository<Order, Long>, JpaSpecificationExecutor<Order> {
++
++    Optional<Order> findByOrderNo(String orderNo);
++
++    @Lock(LockModeType.PESSIMISTIC_WRITE)
++    @Query("SELECT o FROM Order o WHERE o.id = :id")
++    Optional<Order> findByIdForUpdate(@Param("id") Long id);
++
++    @Query("SELECT o FROM Order o WHERE o.status = :status AND o.timeoutAt <= :now")
++    List<Order> findTimeoutOrders(@Param("status") OrderStatus status, @Param("now") LocalDateTime now);
++}
+diff --git a/order-system/src/main/java/com/ordersystem/service/OrderService.java b/order-system/src/main/java/com/ordersystem/service/OrderService.java
+new file mode 100644
+index 0000000000..36879aeaa6
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/service/OrderService.java
+@@ -0,0 +1,107 @@
++package com.ordersystem.service;
++
++import com.ordersystem.entity.Order;
++import com.ordersystem.entity.OrderStatus;
++import com.ordersystem.entity.dto.CreateOrderRequest;
++import com.ordersystem.entity.dto.OrderResponse;
++import com.ordersystem.repository.OrderRepository;
++import lombok.RequiredArgsConstructor;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++import java.time.LocalDateTime;
++import java.util.List;
++import java.util.Optional;
++import java.util.UUID;
++import java.util.stream.Collectors;
++
++@Service
++@RequiredArgsConstructor
++@Slf4j
++public class OrderService {
++
++    private final OrderRepository orderRepository;
++
++    @Transactional
++    public OrderResponse createOrder(CreateOrderRequest request) {
++        String orderNo = generateOrderNo();
++
++        Optional<Order> existingOrder = orderRepository.findByOrderNo(orderNo);
++        if (existingOrder.isPresent()) {
++            log.info("订单已存在，直接返回: {}", orderNo);
++            return toOrderResponse(existingOrder.get());
++        }
++
++        Order order = Order.builder()
++                .orderNo(orderNo)
++                .userId(request.getUserId())
++                .amount(request.getAmount())
++                .status(OrderStatus.PENDING)
++                .timeoutAt(LocalDateTime.now().plusMinutes(30))
++                .build();
++
++        order = orderRepository.save(order);
++        log.info("订单创建成功: {}", orderNo);
++
++        return toOrderResponse(order);
++    }
++
++    public OrderResponse getOrderById(Long id) {
++        return orderRepository.findById(id)
++                .map(this::toOrderResponse)
++                .orElse(null);
++    }
++
++    public OrderResponse getOrderByOrderNo(String orderNo) {
++        return orderRepository.findByOrderNo(orderNo)
++                .map(this::toOrderResponse)
++                .orElse(null);
++    }
++
++    public List<OrderResponse> getAllOrders() {
++        return orderRepository.findAll().stream()
++                .map(this::toOrderResponse)
++                .collect(Collectors.toList());
++    }
++
++    @Transactional
++    public boolean cancelOrder(Long orderId) {
++        Optional<Order> orderOpt = orderRepository.findByIdForUpdate(orderId);
++        if (orderOpt.isEmpty()) {
++            log.warn("订单不存在: {}", orderId);
++            return false;
++        }
++
++        Order order = orderOpt.get();
++        if (order.getStatus() != OrderStatus.PENDING) {
++            log.warn("订单状态不是PENDING，无法取消: {}, status: {}", orderId, order.getStatus());
++            return false;
++        }
++
++        order.setStatus(OrderStatus.CANCELLED);
++        order.setCancelledAt(LocalDateTime.now());
++        orderRepository.save(order);
++        log.info("订单取消成功: {}", order.getOrderNo());
++
++        return true;
++    }
++
++    private String generateOrderNo() {
++        return "ORD" + System.currentTimeMillis() + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
++    }
++
++    private OrderResponse toOrderResponse(Order order) {
++        return OrderResponse.builder()
++                .id(order.getId())
++                .orderNo(order.getOrderNo())
++                .userId(order.getUserId())
++                .amount(order.getAmount())
++                .status(order.getStatus())
++                .timeoutAt(order.getTimeoutAt())
++                .cancelledAt(order.getCancelledAt())
++                .createdAt(order.getCreatedAt())
++                .updatedAt(order.getUpdatedAt())
++                .build();
++    }
++}
+diff --git a/order-system/src/main/java/com/ordersystem/service/OrderTimeoutService.java b/order-system/src/main/java/com/ordersystem/service/OrderTimeoutService.java
+new file mode 100644
+index 0000000000..ddd5f6cf02
+--- /dev/null
++++ b/order-system/src/main/java/com/ordersystem/service/OrderTimeoutService.java
+@@ -0,0 +1,82 @@
++package com.ordersystem.service;
++
++import com.ordersystem.entity.Order;
++import com.ordersystem.entity.OrderStatus;
++import com.ordersystem.repository.OrderRepository;
++import lombok.RequiredArgsConstructor;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.retry.annotation.Backoff;
++import org.springframework.retry.annotation.Retryable;
++import org.springframework.scheduling.annotation.Scheduled;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++import java.time.LocalDateTime;
++import java.util.List;
++
++@Service
++@RequiredArgsConstructor
++@Slf4j
++public class OrderTimeoutService {
++
++    private final OrderRepository orderRepository;
++
++    @Value("${order.timeout.minutes:30}")
++    private int timeoutMinutes;
++
++    @Scheduled(cron = "${order.timeout.schedule.cron:0 * * * * ?}")
++    public void scanAndCancelTimeoutOrders() {
++        log.info("开始扫描超时订单...");
++        LocalDateTime now = LocalDateTime.now();
++
++        try {
++            List<Order> timeoutOrders = orderRepository.findTimeoutOrders(OrderStatus.PENDING, now);
++            log.info("找到 {} 个超时订单待处理", timeoutOrders.size());
++
++            for (Order order : timeoutOrders) {
++                try {
++                    cancelTimeoutOrder(order.getId());
++                } catch (Exception e) {
++                    log.error("取消订单失败: {}", order.getOrderNo(), e);
++                }
++            }
++
++            log.info("超时订单处理完成");
++        } catch (Exception e) {
++            log.error("扫描超时订单异常", e);
++        }
++    }
++
++    @Retryable(
++            retryFor = {Exception.class},
++            maxAttempts = 3,
++            backoff = @Backoff(delay = 1000, multiplier = 2)
++    )
++    @Transactional
++    public void cancelTimeoutOrder(Long orderId) {
++        Order order = orderRepository.findByIdForUpdate(orderId)
++                .orElse(null);
++
++        if (order == null) {
++            log.warn("订单不存在: {}", orderId);
++            return;
++        }
++
++        if (order.getStatus() != OrderStatus.PENDING) {
++            log.warn("订单状态不是PENDING，跳过取消: {}, status: {}", order.getOrderNo(), order.getStatus());
++            return;
++        }
++
++        if (order.getTimeoutAt().isAfter(LocalDateTime.now())) {
++            log.warn("订单还未超时，跳过取消: {}, timeoutAt: {}", order.getOrderNo(), order.getTimeoutAt());
++            return;
++        }
++
++        order.setStatus(OrderStatus.CANCELLED);
++        order.setCancelledAt(LocalDateTime.now());
++        orderRepository.save(order);
++
++        log.info("超时订单已自动取消: {}", order.getOrderNo());
++    }
++}
+diff --git a/order-system/src/main/resources/application.yml b/order-system/src/main/resources/application.yml
+new file mode 100644
+index 0000000000..9c01a726a4
+--- /dev/null
++++ b/order-system/src/main/resources/application.yml
+@@ -0,0 +1,30 @@
++spring:
++  application:
++    name: order-system
++  datasource:
++    url: jdbc:postgresql://localhost:5432/orderdb
++    username: postgres
++    password: postgres
++    driver-class-name: org.postgresql.Driver
++  jpa:
++    hibernate:
++      ddl-auto: validate
++    show-sql: true
++    properties:
++      hibernate:
++        dialect: org.hibernate.dialect.PostgreSQLDialect
++        format_sql: true
++  flyway:
++    enabled: true
++    baseline-on-migrate: true
++    locations: classpath:db/migration
++
++order:
++  timeout:
++    minutes: 30
++    schedule:
++      cron: "0 * * * * ?"
++
++logging:
++  level:
++    com.ordersystem: DEBUG
+diff --git a/order-system/src/main/resources/db/migration/V1__init_schema.sql b/order-system/src/main/resources/db/migration/V1__init_schema.sql
+new file mode 100644
+index 0000000000..d49f24cc33
+--- /dev/null
++++ b/order-system/src/main/resources/db/migration/V1__init_schema.sql
+@@ -0,0 +1,15 @@
++CREATE TABLE orders (
++    id BIGSERIAL PRIMARY KEY,
++    order_no VARCHAR(64) NOT NULL UNIQUE,
++    user_id BIGINT NOT NULL,
++    amount NUMERIC(19, 2) NOT NULL,
++    status VARCHAR(20) NOT NULL,
++    timeout_at TIMESTAMP NOT NULL,
++    cancelled_at TIMESTAMP,
++    created_at TIMESTAMP NOT NULL,
++    updated_at TIMESTAMP NOT NULL,
++    version BIGINT DEFAULT 0
++);
++
++CREATE INDEX idx_orders_status_timeout ON orders(status, timeout_at);
++CREATE INDEX idx_orders_order_no ON orders(order_no);
+diff --git a/order-system/src/test/java/com/ordersystem/OrderSystemApplicationTests.java b/order-system/src/test/java/com/ordersystem/OrderSystemApplicationTests.java
+new file mode 100644
+index 0000000000..b5e66c2ea0
+--- /dev/null
++++ b/order-system/src/test/java/com/ordersystem/OrderSystemApplicationTests.java
+@@ -0,0 +1,12 @@
++package com.ordersystem;
++
++import org.junit.jupiter.api.Test;
++import org.springframework.boot.test.context.SpringBootTest;
++
++@SpringBootTest
++class OrderSystemApplicationTests {
++
++    @Test
++    void contextLoads() {
++    }
++}
+diff --git a/order-system/src/test/java/com/ordersystem/service/OrderServiceTest.java b/order-system/src/test/java/com/ordersystem/service/OrderServiceTest.java
+new file mode 100644
+index 0000000000..df4c31cb1d
+--- /dev/null
++++ b/order-system/src/test/java/com/ordersystem/service/OrderServiceTest.java
+@@ -0,0 +1,155 @@
++package com.ordersystem.service;
++
++import com.ordersystem.entity.Order;
++import com.ordersystem.entity.OrderStatus;
++import com.ordersystem.entity.dto.CreateOrderRequest;
++import com.ordersystem.entity.dto.OrderResponse;
++import com.ordersystem.repository.OrderRepository;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.InjectMocks;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Optional;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.anyString;
++import static org.mockito.Mockito.*;
++
++@ExtendWith(MockitoExtension.class)
++class OrderServiceTest {
++
++    @Mock
++    private OrderRepository orderRepository;
++
++    @InjectMocks
++    private OrderService orderService;
++
++    private Order testOrder;
++
++    @BeforeEach
++    void setUp() {
++        testOrder = Order.builder()
++                .id(1L)
++                .orderNo("ORD1234567890ABCDEF")
++                .userId(100L)
++                .amount(new BigDecimal("99.99"))
++                .status(OrderStatus.PENDING)
++                .timeoutAt(LocalDateTime.now().plusMinutes(30))
++                .createdAt(LocalDateTime.now())
++                .updatedAt(LocalDateTime.now())
++                .build();
++    }
++
++    @Test
++    void testCreateOrder_Success() {
++        CreateOrderRequest request = CreateOrderRequest.builder()
++                .userId(100L)
++                .amount(new BigDecimal("99.99"))
++                .build();
++
++        when(orderRepository.findByOrderNo(anyString())).thenReturn(Optional.empty());
++        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
++
++        OrderResponse response = orderService.createOrder(request);
++
++        assertNotNull(response);
++        assertEquals(testOrder.getOrderNo(), response.getOrderNo());
++        assertEquals(testOrder.getUserId(), response.getUserId());
++        assertEquals(testOrder.getAmount(), response.getAmount());
++        assertEquals(OrderStatus.PENDING, response.getStatus());
++        verify(orderRepository, times(1)).save(any(Order.class));
++    }
++
++    @Test
++    void testCreateOrder_Idempotent() {
++        CreateOrderRequest request = CreateOrderRequest.builder()
++                .userId(100L)
++                .amount(new BigDecimal("99.99"))
++                .build();
++
++        when(orderRepository.findByOrderNo(anyString())).thenReturn(Optional.of(testOrder));
++
++        OrderResponse response = orderService.createOrder(request);
++
++        assertNotNull(response);
++        verify(orderRepository, never()).save(any(Order.class));
++    }
++
++    @Test
++    void testGetOrderById_Success() {
++        when(orderRepository.findById(1L)).thenReturn(Optional.of(testOrder));
++
++        OrderResponse response = orderService.getOrderById(1L);
++
++        assertNotNull(response);
++        assertEquals(testOrder.getId(), response.getId());
++    }
++
++    @Test
++    void testGetOrderById_NotFound() {
++        when(orderRepository.findById(1L)).thenReturn(Optional.empty());
++
++        OrderResponse response = orderService.getOrderById(1L);
++
++        assertNull(response);
++    }
++
++    @Test
++    void testGetAllOrders() {
++        Order order2 = Order.builder()
++                .id(2L)
++                .orderNo("ORD9876543210FEDCBA")
++                .userId(200L)
++                .amount(new BigDecimal("199.99"))
++                .status(OrderStatus.PAID)
++                .timeoutAt(LocalDateTime.now().plusMinutes(30))
++                .createdAt(LocalDateTime.now())
++                .updatedAt(LocalDateTime.now())
++                .build();
++
++        when(orderRepository.findAll()).thenReturn(Arrays.asList(testOrder, order2));
++
++        List<OrderResponse> responses = orderService.getAllOrders();
++
++        assertEquals(2, responses.size());
++    }
++
++    @Test
++    void testCancelOrder_Success() {
++        when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(testOrder));
++        when(orderRepository.save(any(Order.class))).thenReturn(testOrder);
++
++        boolean result = orderService.cancelOrder(1L);
++
++        assertTrue(result);
++        verify(orderRepository, times(1)).save(any(Order.class));
++    }
++
++    @Test
++    void testCancelOrder_AlreadyCancelled() {
++        testOrder.setStatus(OrderStatus.CANCELLED);
++        when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(testOrder));
++
++        boolean result = orderService.cancelOrder(1L);
++
++        assertFalse(result);
++        verify(orderRepository, never()).save(any(Order.class));
++    }
++
++    @Test
++    void testCancelOrder_NotFound() {
++        when(orderRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
++
++        boolean result = orderService.cancelOrder(1L);
++
++        assertFalse(result);
++    }
++}
+diff --git a/order-system/src/test/java/com/ordersystem/service/OrderTimeoutServiceTest.java b/order-system/src/test/java/com/ordersystem/service/OrderTimeoutServiceTest.java
+new file mode 100644
+index 0000000000..393d20cd4e
+--- /dev/null
++++ b/order-system/src/test/java/com/ordersystem/service/OrderTimeoutServiceTest.java
+@@ -0,0 +1,122 @@
++package com.ordersystem.service;
++
++import com.ordersystem.entity.Order;
++import com.ordersystem.entity.OrderStatus;
++import com.ordersystem.repository.OrderRepository;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.InjectMocks;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.Arrays;
++import java.util.Optional;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.*;
++
++@ExtendWith(MockitoExtension.class)
++class OrderTimeoutServiceTest {
++
++    @Mock
++    private OrderRepository orderRepository;
++
++    @InjectMocks
++    private OrderTimeoutService orderTimeoutService;
++
++    private Order pendingOrder;
++    private Order timeoutOrder;
++
++    @BeforeEach
++    void setUp() {
++        pendingOrder = Order.builder()
++                .id(1L)
++                .orderNo("ORD1234567890ABCDEF")
++                .userId(100L)
++                .amount(new BigDecimal("99.99"))
++                .status(OrderStatus.PENDING)
++                .timeoutAt(LocalDateTime.now().plusMinutes(30))
++                .createdAt(LocalDateTime.now())
++                .updatedAt(LocalDateTime.now())
++                .build();
++
++        timeoutOrder = Order.builder()
++                .id(2L)
++                .orderNo("ORD9876543210FEDCBA")
++                .userId(200L)
++                .amount(new BigDecimal("199.99"))
++                .status(OrderStatus.PENDING)
++                .timeoutAt(LocalDateTime.now().minusMinutes(5))
++                .createdAt(LocalDateTime.now().minusMinutes(35))
++                .updatedAt(LocalDateTime.now().minusMinutes(35))
++                .build();
++    }
++
++    @Test
++    void testScanAndCancelTimeoutOrders() {
++        when(orderRepository.findTimeoutOrders(eq(OrderStatus.PENDING), any(LocalDateTime.class)))
++                .thenReturn(Arrays.asList(timeoutOrder));
++        when(orderRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(timeoutOrder));
++        when(orderRepository.save(any(Order.class))).thenReturn(timeoutOrder);
++
++        orderTimeoutService.scanAndCancelTimeoutOrders();
++
++        verify(orderRepository, times(1)).save(any(Order.class));
++    }
++
++    @Test
++    void testCancelTimeoutOrder_Success() {
++        when(orderRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(timeoutOrder));
++        when(orderRepository.save(any(Order.class))).thenReturn(timeoutOrder);
++
++        orderTimeoutService.cancelTimeoutOrder(2L);
++
++        verify(orderRepository, times(1)).save(any(Order.class));
++        assertEquals(OrderStatus.CANCELLED, timeoutOrder.getStatus());
++        assertNotNull(timeoutOrder.getCancelledAt());
++    }
++
++    @Test
++    void testCancelTimeoutOrder_NotPending() {
++        timeoutOrder.setStatus(OrderStatus.PAID);
++        when(orderRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(timeoutOrder));
++
++        orderTimeoutService.cancelTimeoutOrder(2L);
++
++        verify(orderRepository, never()).save(any(Order.class));
++    }
++
++    @Test
++    void testCancelTimeoutOrder_NotTimeoutYet() {
++        timeoutOrder.setTimeoutAt(LocalDateTime.now().plusMinutes(30));
++        when(orderRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(timeoutOrder));
++
++        orderTimeoutService.cancelTimeoutOrder(2L);
++
++        verify(orderRepository, never()).save(any(Order.class));
++    }
++
++    @Test
++    void testCancelTimeoutOrder_NotFound() {
++        when(orderRepository.findByIdForUpdate(2L)).thenReturn(Optional.empty());
++
++        orderTimeoutService.cancelTimeoutOrder(2L);
++
++        verify(orderRepository, never()).save(any(Order.class));
++    }
++
++    @Test
++    void testCancelTimeoutOrder_Idempotent() {
++        timeoutOrder.setStatus(OrderStatus.CANCELLED);
++        when(orderRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(timeoutOrder));
++
++        orderTimeoutService.cancelTimeoutOrder(2L);
++
++        verify(orderRepository, never()).save(any(Order.class));
++    }
++}
