@@ -113,26 +113,12 @@ services:
       - NODE_ENV=development
       - DB_CONNECTION_URI=postgres://infisical:infisical@db/infisical?sslmode=disable
       - TELEMETRY_ENABLED=false
-      # Dev-only: lets the backend accept PingFederate's self-signed cert when testing
       # OIDC locally via `make up-dev-pingfed`. NEVER set this in production.
-      # - NODE_TLS_REJECT_UNAUTHORIZED=0
-    volumes:
-      - ./backend/src:/app/src
       - softhsm_tokens:/etc/softhsm2/tokens # SoftHSM tokens are stored in a volume to persist across container restarts
     extra_hosts:
       - "host.docker.internal:host-gateway"
-      - "pf.local:host-gateway" # PingFederate dev container — resolves the same on host and inside compose
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/api/status"]
       interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 120s
-
-  prometheus:
-    image: prom/prometheus
-    volumes:
-      - ./prometheus.dev.yml:/etc/prometheus/prometheus.yml
+      - softhsm_tokens:/etc/softhsm2/tokens # SoftHSM tokens are stored in a volume to persist across container restarts
     ports:
       - "9090:9090"
     command:
@@ -164,54 +150,74 @@ services:
     volumes:
       - "grafana_storage:/var/lib/grafana"
     profiles: [metrics]
+      - "pf.local:host-gateway" # PingFederate dev container — resolves the same on host and inside compose
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/api/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
 
-  frontend:
-    container_name: infisical-dev-frontend
+  prometheus:
+    command:
+      - ./frontend/src:/app/src/ # mounted whole src to avoid missing reload on new files
+    profiles: [metrics]
+
+    env_file: .env
+      - 8889:8889 # Prometheus exporter metrics
+      - 13133:13133 # health_check extension
+      - 4317:4317 # OTLP gRPC receiver
+      - 4318:4318 # OTLP http receiver
+      - 55679:55679 # zpages extension
+    profiles: [metrics-otel]
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+      - ./frontend/src:/app/src/ # mounted whole src to avoid missing reload on new files
     restart: unless-stopped
     depends_on:
-      - backend
-    build:
-      context: ./frontend
       dockerfile: Dockerfile.dev
     volumes:
       - ./frontend/src:/app/src/ # mounted whole src to avoid missing reload on new files
-      - ./frontend/public:/app/public
+      - 5050:80
       - ./frontend/index.html:/app/index.html
     env_file: .env
 
   backend-go:
     container_name: infisical-dev-api-go
-    build:
+    image: lytrax/mailhog:latest # https://github.com/mailhog/MailHog/issues/353#issuecomment-821137362
       context: ./backend-go
       dockerfile: Dockerfile.dev.fips
-    depends_on:
+      driver: "none" # disable saving logs
       db:
-        condition: service_started
-      redis:
+      - 1025:1025 # SMTP server
+      - 8025:8025 # Web UI
         condition: service_started
       backend:
+    # note: more advanced configuration is available
         condition: service_healthy
     ports:
-      - 4040:4040
     volumes:
       - ./backend-go:/app
     environment:
       - DB_CONNECTION_URI=postgres://infisical:infisical@db/infisical?sslmode=disable
-      - REDIS_URL=redis://redis:6379
-    env_file:
+      - 389:389
+      - 636:636
       - .env
     profiles: [go]
 
   pgadmin:
     image: dpage/pgadmin4
     restart: always
+    # username: cn=admin,dc=acme,dc=com, pass is admin
     volumes:
       - ./servers.json:/pgadmin4/servers.json
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@example.com
       PGADMIN_DEFAULT_PASSWORD: pass
     ports:
-      - 5050:80
+      - 6433:80
     depends_on:
       - db
 
@@ -224,10 +230,17 @@ services:
     ports:
       - 1025:1025 # SMTP server
       - 8025:8025 # Web UI
-
+      - 8088:8080
   openldap:
     # note: more advanced configuration is available
     image: osixia/openldap:1.5.0
+    # Requires free Ping Identity DevOps credentials — register at
+    # https://devops.pingidentity.com/how-to/devopsRegistration/
+    # then set PING_IDENTITY_DEVOPS_USER and PING_IDENTITY_DEVOPS_KEY in your .env.
+    # Alternatively, leave both unset to run in Trial Product mode using the
+    # bundled license from pingidentity-server-profiles (expires periodically).
+    # Admin console: https://localhost:9999/pingfederate (administrator / 2FederateM0re)
+    # Runtime endpoint (SAML/OIDC/SCIM): https://localhost:9031
     restart: always
     environment:
       LDAP_ORGANISATION: Acme
@@ -236,10 +249,12 @@ services:
     ports:
       - 389:389
       - 636:636
+      # Enable Outbound Provisioning runtime for SCIM testing.
+      # Maps to pf.provisioner.mode in run.properties. STANDALONE = single node.
     volumes:
       - ldap_data:/var/lib/ldap
-      - ldap_config:/etc/ldap/slapd.d
-    profiles: [ldap]
+      - 9999:9999 # admin console
+      - 9031:9031 # runtime (SAML/OIDC/SCIM)
 
   phpldapadmin:
     # username: cn=admin,dc=acme,dc=com, pass is admin
@@ -247,6 +262,10 @@ services:
     restart: always
     environment:
       - PHPLDAPADMIN_LDAP_HOSTS=openldap
+    # Samba 4 Active Directory Domain Controller for SCIM/SSO testing.
+    # Bootstraps an ACME.LOCAL domain on first start (~60s).
+    # Admin: Administrator / value of SAMBA_ADMIN_PASSWORD (defaults to Passw0rd!).
+    # Reachable from compose network at samba-ad:389; from host at localhost:1389.
       - PHPLDAPADMIN_HTTPS=false
     ports:
       - 6433:80
@@ -259,56 +278,17 @@ services:
     restart: always
     environment:
       - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
-      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - INSECURELDAP=true # dev only — allows ldap:// without TLS
     command: start-dev
-    ports:
-      - 8088:8080
-    profiles: [sso]
-
+      - 1389:389 # ldap (mapped off 389 to coexist with the openldap profile)
+      - 1636:636 # ldaps
+      - 88:88 # kerberos
+      - 88:88/udp
   pingfederate:
     # Requires free Ping Identity DevOps credentials — register at
     # https://devops.pingidentity.com/how-to/devopsRegistration/
     # then set PING_IDENTITY_DEVOPS_USER and PING_IDENTITY_DEVOPS_KEY in your .env.
     # Alternatively, leave both unset to run in Trial Product mode using the
-    # bundled license from pingidentity-server-profiles (expires periodically).
-    # Admin console: https://localhost:9999/pingfederate (administrator / 2FederateM0re)
-    # Runtime endpoint (SAML/OIDC/SCIM): https://localhost:9031
-    image: pingidentity/pingfederate:2604
-    restart: always
-    environment:
-      - PING_IDENTITY_ACCEPT_EULA=YES
-      - PING_IDENTITY_DEVOPS_USER=${PING_IDENTITY_DEVOPS_USER}
-      - PING_IDENTITY_DEVOPS_KEY=${PING_IDENTITY_DEVOPS_KEY}
-      - SERVER_PROFILE_URL=https://github.com/pingidentity/pingidentity-server-profiles.git
-      - SERVER_PROFILE_PATH=getting-started/pingfederate
-      # Enable Outbound Provisioning runtime for SCIM testing.
-      # Maps to pf.provisioner.mode in run.properties. STANDALONE = single node.
-      - PF_PROVISIONER_MODE=STANDALONE
-    ports:
-      - 9999:9999 # admin console
-      - 9031:9031 # runtime (SAML/OIDC/SCIM)
-    volumes:
-      - pingfederate_data:/opt/out
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    profiles: [pingfed]
-
-  samba-ad:
-    # Samba 4 Active Directory Domain Controller for SCIM/SSO testing.
-    # Bootstraps an ACME.LOCAL domain on first start (~60s).
-    # Admin: Administrator / value of SAMBA_ADMIN_PASSWORD (defaults to Passw0rd!).
-    # Reachable from compose network at samba-ad:389; from host at localhost:1389.
-    image: nowsci/samba-domain:latest
-    container_name: infisical-dev-samba-ad
-    hostname: dc1
-    cap_add:
-      - SYS_ADMIN
-    privileged: true
-    environment:
-      - DOMAIN=ACME.LOCAL
-      - DOMAIN_DC=dc=acme,dc=local
-      - DOMAINPASS=${SAMBA_ADMIN_PASSWORD:-Passw0rd!}
-      - DNSFORWARDER=8.8.8.8
       - HOSTIP=0.0.0.0
       - INSECURELDAP=true # dev only — allows ldap:// without TLS
     ports:
@@ -325,8 +305,6 @@ volumes:
   postgres-data:
     driver: local
   redis_data:
-    driver: local
-  clickhouse_data:
     driver: local
   clickhouse_logs:
     driver: local
