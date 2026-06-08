@@ -1,0 +1,606 @@
+diff --git a/backend-go/internal/calculator/calculator.go b/backend-go/internal/calculator/calculator.go
+new file mode 100644
+index 0000000000..041c8b98b2
+--- /dev/null
++++ b/backend-go/internal/calculator/calculator.go
+@@ -0,0 +1,19 @@
++package calculator
++
++type Calculator struct {
++	factory *TaxStrategyFactory
++}
++
++func NewCalculator() *Calculator {
++	return &Calculator{
++		factory: NewTaxStrategyFactory(),
++	}
++}
++
++func (c *Calculator) CalculateTax(taxType TaxType, input TaxCalculationInput) (TaxCalculationResult, error) {
++	strategy, err := c.factory.GetStrategy(taxType)
++	if err != nil {
++		return TaxCalculationResult{}, err
++	}
++	return strategy.Calculate(input)
++}
+diff --git a/backend-go/internal/calculator/capital_gain_strategy.go b/backend-go/internal/calculator/capital_gain_strategy.go
+new file mode 100644
+index 0000000000..673a0b580b
+--- /dev/null
++++ b/backend-go/internal/calculator/capital_gain_strategy.go
+@@ -0,0 +1,37 @@
++package calculator
++
++type CapitalGainStrategy struct{}
++
++func NewCapitalGainStrategy() *CapitalGainStrategy {
++	return &CapitalGainStrategy{}
++}
++
++func (s *CapitalGainStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeCapitalGain
++}
++
++func (s *CapitalGainStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount - input.Deductions
++	if taxableAmount < 0 {
++		taxableAmount = 0
++	}
++
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.20
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Capital Gain", Amount: input.Amount},
++			{Description: "Deductions", Amount: -input.Deductions},
++			{Description: "Taxable Gain", Amount: taxableAmount},
++			{Description: "Capital Gain Tax", Amount: taxAmount},
++		},
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/corporate_strategy.go b/backend-go/internal/calculator/corporate_strategy.go
+new file mode 100644
+index 0000000000..d41744c8d5
+--- /dev/null
++++ b/backend-go/internal/calculator/corporate_strategy.go
+@@ -0,0 +1,37 @@
++package calculator
++
++type CorporateStrategy struct{}
++
++func NewCorporateStrategy() *CorporateStrategy {
++	return &CorporateStrategy{}
++}
++
++func (s *CorporateStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeCorporate
++}
++
++func (s *CorporateStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount - input.Deductions
++	if taxableAmount < 0 {
++		taxableAmount = 0
++	}
++
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.21
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Corporate Income", Amount: input.Amount},
++			{Description: "Business Deductions", Amount: -input.Deductions},
++			{Description: "Taxable Income", Amount: taxableAmount},
++			{Description: "Corporate Tax", Amount: taxAmount},
++		},
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/customs_strategy.go b/backend-go/internal/calculator/customs_strategy.go
+new file mode 100644
+index 0000000000..1393264907
+--- /dev/null
++++ b/backend-go/internal/calculator/customs_strategy.go
+@@ -0,0 +1,31 @@
++package calculator
++
++type CustomsStrategy struct{}
++
++func NewCustomsStrategy() *CustomsStrategy {
++	return &CustomsStrategy{}
++}
++
++func (s *CustomsStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeCustoms
++}
++
++func (s *CustomsStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.15
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Customs Value", Amount: input.Amount},
++			{Description: "Customs Duty", Amount: taxAmount},
++		},
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/example_test.go b/backend-go/internal/calculator/example_test.go
+new file mode 100644
+index 0000000000..aa303fb211
+--- /dev/null
++++ b/backend-go/internal/calculator/example_test.go
+@@ -0,0 +1,28 @@
++package calculator
++
++import "testing"
++
++func TestCalculateTax(t *testing.T) {
++	calc := NewCalculator()
++
++	input := TaxCalculationInput{
++		Amount:     100000,
++		TaxRate:    0.20,
++		Deductions: 10000,
++		Exemptions: 5000,
++	}
++
++	result, err := calc.CalculateTax(TaxTypeVAT, input)
++	if err != nil {
++		t.Fatalf("CalculateTax failed: %v", err)
++	}
++
++	t.Logf("VAT Tax: %.2f", result.TaxAmount)
++
++	result, err = calc.CalculateTax(TaxTypeIncome, input)
++	if err != nil {
++		t.Fatalf("CalculateTax failed: %v", err)
++	}
++
++	t.Logf("Income Tax: %.2f", result.TaxAmount)
++}
+diff --git a/backend-go/internal/calculator/excise_strategy.go b/backend-go/internal/calculator/excise_strategy.go
+new file mode 100644
+index 0000000000..992f586a6e
+--- /dev/null
++++ b/backend-go/internal/calculator/excise_strategy.go
+@@ -0,0 +1,31 @@
++package calculator
++
++type ExciseStrategy struct{}
++
++func NewExciseStrategy() *ExciseStrategy {
++	return &ExciseStrategy{}
++}
++
++func (s *ExciseStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeExcise
++}
++
++func (s *ExciseStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.10
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Product Value", Amount: input.Amount},
++			{Description: "Excise Tax", Amount: taxAmount},
++		},
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/income_strategy.go b/backend-go/internal/calculator/income_strategy.go
+new file mode 100644
+index 0000000000..9ff469fc2e
+--- /dev/null
++++ b/backend-go/internal/calculator/income_strategy.go
+@@ -0,0 +1,60 @@
++package calculator
++
++type IncomeStrategy struct{}
++
++func NewIncomeStrategy() *IncomeStrategy {
++	return &IncomeStrategy{}
++}
++
++func (s *IncomeStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeIncome
++}
++
++func (s *IncomeStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount - input.Deductions - input.Exemptions
++	if taxableAmount < 0 {
++		taxableAmount = 0
++	}
++
++	var totalTax float64
++	breakdown := []TaxBreakdownItem{
++		{Description: "Gross Income", Amount: input.Amount},
++		{Description: "Deductions", Amount: -input.Deductions},
++		{Description: "Exemptions", Amount: -input.Exemptions},
++		{Description: "Taxable Income", Amount: taxableAmount},
++	}
++
++	if len(input.TaxBrackets) > 0 {
++		for _, bracket := range input.TaxBrackets {
++			if taxableAmount <= bracket.MinAmount {
++				continue
++			}
++			bracketAmount := min(taxableAmount, bracket.MaxAmount) - bracket.MinAmount
++			if bracketAmount > 0 {
++				bracketTax := bracketAmount * bracket.Rate
++				totalTax += bracketTax
++				breakdown = append(breakdown, TaxBreakdownItem{
++					Description: "Bracket Tax",
++					Amount:      bracketTax,
++				})
++			}
++		}
++	} else {
++		taxRate := input.TaxRate
++		if taxRate <= 0 {
++			taxRate = 0.25
++		}
++		totalTax = taxableAmount * taxRate
++		breakdown = append(breakdown, TaxBreakdownItem{
++			Description: "Income Tax",
++			Amount:      totalTax,
++		})
++	}
++
++	return TaxCalculationResult{
++		TaxAmount:     totalTax,
++		TaxRate:       input.TaxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown:     breakdown,
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/inheritance_strategy.go b/backend-go/internal/calculator/inheritance_strategy.go
+new file mode 100644
+index 0000000000..b7486b0a8a
+--- /dev/null
++++ b/backend-go/internal/calculator/inheritance_strategy.go
+@@ -0,0 +1,37 @@
++package calculator
++
++type InheritanceStrategy struct{}
++
++func NewInheritanceStrategy() *InheritanceStrategy {
++	return &InheritanceStrategy{}
++}
++
++func (s *InheritanceStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeInheritance
++}
++
++func (s *InheritanceStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount - input.Exemptions
++	if taxableAmount < 0 {
++		taxableAmount = 0
++	}
++
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.40
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Inheritance Value", Amount: input.Amount},
++			{Description: "Exemptions", Amount: -input.Exemptions},
++			{Description: "Taxable Amount", Amount: taxableAmount},
++			{Description: "Inheritance Tax", Amount: taxAmount},
++		},
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/payroll_strategy.go b/backend-go/internal/calculator/payroll_strategy.go
+new file mode 100644
+index 0000000000..6c8b9c3b94
+--- /dev/null
++++ b/backend-go/internal/calculator/payroll_strategy.go
+@@ -0,0 +1,37 @@
++package calculator
++
++type PayrollStrategy struct{}
++
++func NewPayrollStrategy() *PayrollStrategy {
++	return &PayrollStrategy{}
++}
++
++func (s *PayrollStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypePayroll
++}
++
++func (s *PayrollStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount - input.Exemptions
++	if taxableAmount < 0 {
++		taxableAmount = 0
++	}
++
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.0765
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Gross Payroll", Amount: input.Amount},
++			{Description: "Exemptions", Amount: -input.Exemptions},
++			{Description: "Taxable Payroll", Amount: taxableAmount},
++			{Description: "Payroll Tax", Amount: taxAmount},
++		},
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/property_strategy.go b/backend-go/internal/calculator/property_strategy.go
+new file mode 100644
+index 0000000000..40f94c544f
+--- /dev/null
++++ b/backend-go/internal/calculator/property_strategy.go
+@@ -0,0 +1,39 @@
++package calculator
++
++type PropertyStrategy struct{}
++
++func NewPropertyStrategy() *PropertyStrategy {
++	return &PropertyStrategy{}
++}
++
++func (s *PropertyStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeProperty
++}
++
++func (s *PropertyStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	assessedValue := input.Amount * 0.8
++	taxableAmount := assessedValue - input.Exemptions
++	if taxableAmount < 0 {
++		taxableAmount = 0
++	}
++
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.015
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Market Value", Amount: input.Amount},
++			{Description: "Assessed Value (80%)", Amount: assessedValue},
++			{Description: "Exemptions", Amount: -input.Exemptions},
++			{Description: "Taxable Value", Amount: taxableAmount},
++			{Description: "Property Tax", Amount: taxAmount},
++		},
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/sales_strategy.go b/backend-go/internal/calculator/sales_strategy.go
+new file mode 100644
+index 0000000000..9e4a9491fb
+--- /dev/null
++++ b/backend-go/internal/calculator/sales_strategy.go
+@@ -0,0 +1,31 @@
++package calculator
++
++type SalesStrategy struct{}
++
++func NewSalesStrategy() *SalesStrategy {
++	return &SalesStrategy{}
++}
++
++func (s *SalesStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeSales
++}
++
++func (s *SalesStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.08
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Sales Amount", Amount: input.Amount},
++			{Description: "Sales Tax", Amount: taxAmount},
++		},
++	}, nil
++}
+diff --git a/backend-go/internal/calculator/tax_strategy.go b/backend-go/internal/calculator/tax_strategy.go
+new file mode 100644
+index 0000000000..c9d0379337
+--- /dev/null
++++ b/backend-go/internal/calculator/tax_strategy.go
+@@ -0,0 +1,56 @@
++package calculator
++
++func min(a, b float64) float64 {
++	if a < b {
++		return a
++	}
++	return b
++}
++
++type TaxType string
++
++const (
++	TaxTypeVAT         TaxType = "vat"
++	TaxTypeIncome      TaxType = "income"
++	TaxTypeCorporate   TaxType = "corporate"
++	TaxTypeSales       TaxType = "sales"
++	TaxTypeProperty    TaxType = "property"
++	TaxTypeExcise      TaxType = "excise"
++	TaxTypeCustoms     TaxType = "customs"
++	TaxTypePayroll     TaxType = "payroll"
++	TaxTypeCapitalGain TaxType = "capital_gain"
++	TaxTypeInheritance TaxType = "inheritance"
++)
++
++type TaxCalculationInput struct {
++	Amount         float64
++	Region         string
++	TaxRate        float64
++	Deductions     float64
++	Exemptions     float64
++	TaxBrackets    []TaxBracket
++	AdditionalInfo map[string]interface{}
++}
++
++type TaxBracket struct {
++	MinAmount float64
++	MaxAmount float64
++	Rate      float64
++}
++
++type TaxCalculationResult struct {
++	TaxAmount     float64
++	TaxRate       float64
++	TaxableAmount float64
++	Breakdown     []TaxBreakdownItem
++}
++
++type TaxBreakdownItem struct {
++	Description string
++	Amount      float64
++}
++
++type TaxStrategy interface {
++	Calculate(input TaxCalculationInput) (TaxCalculationResult, error)
++	CanHandle(taxType TaxType) bool
++}
+diff --git a/backend-go/internal/calculator/tax_strategy_factory.go b/backend-go/internal/calculator/tax_strategy_factory.go
+new file mode 100644
+index 0000000000..69aae716c3
+--- /dev/null
++++ b/backend-go/internal/calculator/tax_strategy_factory.go
+@@ -0,0 +1,42 @@
++package calculator
++
++import "errors"
++
++var (
++	ErrUnsupportedTaxType = errors.New("unsupported tax type")
++)
++
++type TaxStrategyFactory struct {
++	strategies []TaxStrategy
++}
++
++func NewTaxStrategyFactory() *TaxStrategyFactory {
++	factory := &TaxStrategyFactory{
++		strategies: []TaxStrategy{
++			NewVATStrategy(),
++			NewIncomeStrategy(),
++			NewCorporateStrategy(),
++			NewSalesStrategy(),
++			NewPropertyStrategy(),
++			NewExciseStrategy(),
++			NewCustomsStrategy(),
++			NewPayrollStrategy(),
++			NewCapitalGainStrategy(),
++			NewInheritanceStrategy(),
++		},
++	}
++	return factory
++}
++
++func (f *TaxStrategyFactory) GetStrategy(taxType TaxType) (TaxStrategy, error) {
++	for _, strategy := range f.strategies {
++		if strategy.CanHandle(taxType) {
++			return strategy, nil
++		}
++	}
++	return nil, ErrUnsupportedTaxType
++}
++
++func (f *TaxStrategyFactory) RegisterStrategy(strategy TaxStrategy) {
++	f.strategies = append(f.strategies, strategy)
++}
+diff --git a/backend-go/internal/calculator/vat_strategy.go b/backend-go/internal/calculator/vat_strategy.go
+new file mode 100644
+index 0000000000..fe67e611c6
+--- /dev/null
++++ b/backend-go/internal/calculator/vat_strategy.go
+@@ -0,0 +1,37 @@
++package calculator
++
++type VATStrategy struct{}
++
++func NewVATStrategy() *VATStrategy {
++	return &VATStrategy{}
++}
++
++func (s *VATStrategy) CanHandle(taxType TaxType) bool {
++	return taxType == TaxTypeVAT
++}
++
++func (s *VATStrategy) Calculate(input TaxCalculationInput) (TaxCalculationResult, error) {
++	taxableAmount := input.Amount - input.Exemptions
++	if taxableAmount < 0 {
++		taxableAmount = 0
++	}
++
++	taxRate := input.TaxRate
++	if taxRate <= 0 {
++		taxRate = 0.20
++	}
++
++	taxAmount := taxableAmount * taxRate
++
++	return TaxCalculationResult{
++		TaxAmount:     taxAmount,
++		TaxRate:       taxRate,
++		TaxableAmount: taxableAmount,
++		Breakdown: []TaxBreakdownItem{
++			{Description: "Gross Amount", Amount: input.Amount},
++			{Description: "Exemptions", Amount: -input.Exemptions},
++			{Description: "Taxable Amount", Amount: taxableAmount},
++			{Description: "VAT Tax", Amount: taxAmount},
++		},
++	}, nil
++}
