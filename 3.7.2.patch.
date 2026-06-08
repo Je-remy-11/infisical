@@ -1,0 +1,165 @@
+diff --git a/frontend/src/components/DataTable.jsx b/frontend/src/components/DataTable.jsx
+new file mode 100644
+index 0000000000..1cea8ab1e0
+--- /dev/null
++++ b/frontend/src/components/DataTable.jsx
+@@ -0,0 +1,109 @@
++import { useCallback, useEffect, useRef } from "react";
++
++import { useDebouncedCallback } from "../hooks/useDebouncedCallback";
++
++const SCROLL_THRESHOLD = 120;
++
++const resolveRowKey = (row, index) => row.id ?? row.key ?? index;
++
++export default function DataTable({
++  columns,
++  rows,
++  hasMore,
++  isLoading,
++  isLoadingMore = false,
++  loadMore,
++  emptyState = "No data available"
++}) {
++  const scrollContainerRef = useRef(null);
++  const isLoadMoreInFlightRef = useRef(false);
++
++  useEffect(() => {
++    if (!isLoadingMore) {
++      isLoadMoreInFlightRef.current = false;
++    }
++  }, [isLoadingMore]);
++
++  const requestMoreRows = useCallback(async () => {
++    if (!hasMore || isLoading || isLoadingMore || isLoadMoreInFlightRef.current) {
++      return;
++    }
++
++    isLoadMoreInFlightRef.current = true;
++
++    try {
++      await Promise.resolve(loadMore());
++    } finally {
++      isLoadMoreInFlightRef.current = false;
++    }
++  }, [hasMore, isLoading, isLoadingMore, loadMore]);
++
++  const debouncedLoadMore = useDebouncedCallback(requestMoreRows, 200, [requestMoreRows]);
++
++  const handleScroll = useCallback(
++    (event) => {
++      const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
++      const remainingScrollDistance = scrollHeight - scrollTop - clientHeight;
++
++      if (remainingScrollDistance <= SCROLL_THRESHOLD) {
++        debouncedLoadMore();
++      }
++    },
++    [debouncedLoadMore]
++  );
++
++  useEffect(() => {
++    const container = scrollContainerRef.current;
++
++    if (!container) {
++      return undefined;
++    }
++
++    const remainingScrollDistance = container.scrollHeight - container.scrollTop - container.clientHeight;
++
++    if (remainingScrollDistance <= SCROLL_THRESHOLD) {
++      debouncedLoadMore();
++    }
++
++    return undefined;
++  }, [debouncedLoadMore, rows.length]);
++
++  return (
++    <div ref={scrollContainerRef} className="max-h-[600px] overflow-auto" onScroll={handleScroll}>
++      <table className="min-w-full divide-y divide-mineshaft-700">
++        <thead className="bg-mineshaft-800/70 sticky top-0 z-10">
++          <tr>
++            {columns.map((column) => (
++              <th key={column.key} className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-bunker-300">
++                {column.title}
++              </th>
++            ))}
++          </tr>
++        </thead>
++        <tbody className="divide-y divide-mineshaft-800 bg-mineshaft-900">
++          {rows.length === 0 && !isLoading ? (
++            <tr>
++              <td className="px-4 py-6 text-center text-sm text-bunker-300" colSpan={columns.length}>
++                {emptyState}
++              </td>
++            </tr>
++          ) : (
++            rows.map((row, index) => (
++              <tr key={resolveRowKey(row, index)}>
++                {columns.map((column) => (
++                  <td key={column.key} className="whitespace-nowrap px-4 py-3 text-sm text-bunker-200">
++                    {column.render ? column.render(row, index) : row[column.key]}
++                  </td>
++                ))}
++              </tr>
++            ))
++          )}
++        </tbody>
++      </table>
++
++      {(isLoading || isLoadingMore) && (
++        <div className="px-4 py-3 text-center text-sm text-bunker-300">Loading...</div>
++      )}
++    </div>
++  );
++}
+diff --git a/frontend/src/hooks/index.ts b/frontend/src/hooks/index.ts
+index c8e838e06a..458d88543d 100644
+--- a/frontend/src/hooks/index.ts
++++ b/frontend/src/hooks/index.ts
+@@ -3,8 +3,6 @@ export {
+   useCanUseProjectAppConnectionImport
+ } from "./useCanUseAppConnectionImport";
+ export { useDebounce } from "./useDebounce";
+-export * from "./useGetProjectTypeFromRoute";
+-export { useLastLogin } from "./useLastLogin";
+ export { useLocalStorageState } from "./useLocalStorageState";
+ export { usePagination } from "./usePagination";
+ export { usePersistentState } from "./usePersistentState";
+diff --git a/frontend/src/hooks/useDebouncedCallback.js b/frontend/src/hooks/useDebouncedCallback.js
+new file mode 100644
+index 0000000000..dd869b559f
+--- /dev/null
++++ b/frontend/src/hooks/useDebouncedCallback.js
+@@ -0,0 +1,31 @@
++import { useCallback, useEffect, useRef } from "react";
++
++export const useDebouncedCallback = (callback, delay = 300, dependencies = []) => {
++  const callbackRef = useRef(callback);
++  const timeoutRef = useRef(null);
++
++  useEffect(() => {
++    callbackRef.current = callback;
++  }, [callback, ...dependencies]);
++
++  const cancel = useCallback(() => {
++    if (timeoutRef.current) {
++      clearTimeout(timeoutRef.current);
++      timeoutRef.current = null;
++    }
++  }, []);
++
++  const debouncedCallback = useCallback(
++    (...args) => {
++      cancel();
++      timeoutRef.current = setTimeout(() => {
++        callbackRef.current(...args);
++      }, delay);
++    },
++    [cancel, delay]
++  );
++
++  useEffect(() => cancel, [cancel]);
++
++  return debouncedCallback;
++};
