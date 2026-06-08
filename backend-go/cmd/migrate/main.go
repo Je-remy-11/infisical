@@ -1,0 +1,163 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/infisical/api/internal/config"
+	"github.com/infisical/api/internal/database/pg"
+	"github.com/infisical/api/internal/libs/logutil"
+	"github.com/jackc/pgx/v5/stdlib"
+)
+
+func main() {
+	// Setup structured JSON logger with context enrichment
+	logger := slog.New(logutil.NewContextHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: config.GetConfiguredSlogLevel(),
+	})))
+	slog.SetDefault(logger)
+
+	// Verify command
+	if len(os.Args) < 2 || os.Args[1] != "up" {
+		logger.Error("Usage: migrate up")
+		os.Exit(1)
+	}
+
+	// Load configuration
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		var validationErr *config.ValidationError
+		if errors.As(err, &validationErr) {
+			logger.ErrorContext(context.Background(), "invalid environment variables")
+			for _, issue := range validationErr.Issues {
+				logger.ErrorContext(context.Background(), "  "+issue)
+			}
+		} else {
+			logger.ErrorContext(context.Background(), "failed to load config", slog.Any("error", err))
+		}
+		os.Exit(1)
+	}
+
+	if err := runMigrateUp(cfg, logger); err != nil {
+		logger.Error("Migration failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+	logger.Info("All migrations applied successfully")
+}
+
+func runMigrateUp(cfg *config.Config, logger *slog.Logger) error {
+	ctx := context.Background()
+
+	// Connect to database using existing pg logic
+	pgDB, err := pg.NewPostgresDB(ctx, cfg.DBConnectionURI, cfg.DBRootCert, cfg.DBReadReplicas)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer pgDB.Close()
+
+	// Obtain standard database/sql DB from the primary pgxpool
+	db := stdlib.OpenDBFromPool(pgDB.Primary())
+	defer db.Close()
+
+	// Ensure schema_migrations table exists
+	if err := ensureSchemaMigrationsTable(ctx, db); err != nil {
+		return fmt.Errorf("failed to ensure schema_migrations table: %w", err)
+	}
+
+	// Read migration files from ./migrations
+	migrationsDir := "./migrations"
+	files, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			logger.Info("No migrations directory found. Skipping migrations.")
+			return nil
+		}
+		return fmt.Errorf("failed to read migrations directory: %w", err)
+	}
+
+	// Filter and sort .sql files
+	var sqlFiles []string
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".sql") {
+			sqlFiles = append(sqlFiles, f.Name())
+		}
+	}
+	sort.Strings(sqlFiles)
+
+	for _, filename := range sqlFiles {
+		// Check if already applied
+		applied, err := isMigrationApplied(ctx, db, filename)
+		if err != nil {
+			return fmt.Errorf("failed to check migration status for %s: %w", filename, err)
+		}
+		if applied {
+			logger.Info("Skipping already applied migration", slog.String("file", filename))
+			continue
+		}
+
+		logger.Info("Applying migration", slog.String("file", filename))
+		content, err := os.ReadFile(filepath.Join(migrationsDir, filename))
+		if err != nil {
+			return fmt.Errorf("failed to read migration file %s: %w", filename, err)
+		}
+
+		if err := applyMigration(ctx, db, filename, string(content)); err != nil {
+			return fmt.Errorf("failed to apply migration %s: %w", filename, err)
+		}
+		logger.Info("Successfully applied migration", slog.String("file", filename))
+	}
+
+	return nil
+}
+
+func ensureSchemaMigrationsTable(ctx context.Context, db *sql.DB) error {
+	query := `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version VARCHAR(255) PRIMARY KEY,
+			applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		);
+	`
+	_, err := db.ExecContext(ctx, query)
+	return err
+}
+
+func isMigrationApplied(ctx context.Context, db *sql.DB, version string) (bool, error) {
+	var count int
+	err := db.QueryRowContext(ctx, "SELECT COUNT(1) FROM schema_migrations WHERE version = $1", version).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func applyMigration(ctx context.Context, db *sql.DB, version, content string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Execute migration
+	if _, err := tx.ExecContext(ctx, content); err != nil {
+		return fmt.Errorf("execution failed: %w", err)
+	}
+
+	// Record migration version
+	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
+		return fmt.Errorf("failed to record migration version: %w", err)
+	}
+
+	// Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
