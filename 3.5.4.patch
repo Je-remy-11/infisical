@@ -1,0 +1,1045 @@
+diff --git a/order-system/pom.xml b/order-system/pom.xml
+new file mode 100644
+index 0000000000..a6d0400378
+--- /dev/null
++++ b/order-system/pom.xml
+@@ -0,0 +1,109 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project xmlns="http://maven.apache.org/POM/4.0.0"
++         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
++    <modelVersion>4.0.0</modelVersion>
++
++    <groupId>com.example</groupId>
++    <artifactId>order-system</artifactId>
++    <version>1.0.0-SNAPSHOT</version>
++    <packaging>jar</packaging>
++
++    <parent>
++        <groupId>org.springframework.boot</groupId>
++        <artifactId>spring-boot-starter-parent</artifactId>
++        <version>3.2.0</version>
++        <relativePath/>
++    </parent>
++
++    <properties>
++        <java.version>17</java.version>
++        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
++    </properties>
++
++    <dependencies>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-web</artifactId>
++        </dependency>
++
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-data-jpa</artifactId>
++        </dependency>
++
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-validation</artifactId>
++        </dependency>
++
++        <dependency>
++            <groupId>org.springframework.retry</groupId>
++            <artifactId>spring-retry</artifactId>
++        </dependency>
++
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-aop</artifactId>
++        </dependency>
++
++        <dependency>
++            <groupId>org.redisson</groupId>
++            <artifactId>redisson-spring-boot-starter</artifactId>
++            <version>3.25.0</version>
++        </dependency>
++
++        <dependency>
++            <groupId>com.h2database</groupId>
++            <artifactId>h2</artifactId>
++            <scope>runtime</scope>
++        </dependency>
++
++        <dependency>
++            <groupId>mysql</groupId>
++            <artifactId>mysql-connector-java</artifactId>
++            <version>8.0.33</version>
++            <scope>runtime</scope>
++        </dependency>
++
++        <dependency>
++            <groupId>org.flywaydb</groupId>
++            <artifactId>flyway-core</artifactId>
++        </dependency>
++
++        <dependency>
++            <groupId>org.projectlombok</groupId>
++            <artifactId>lombok</artifactId>
++            <optional>true</optional>
++        </dependency>
++
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-test</artifactId>
++            <scope>test</scope>
++        </dependency>
++
++        <dependency>
++            <groupId>org.mockito</groupId>
++            <artifactId>mockito-core</artifactId>
++            <scope>test</scope>
++        </dependency>
++    </dependencies>
++
++    <build>
++        <plugins>
++            <plugin>
++                <groupId>org.springframework.boot</groupId>
++                <artifactId>spring-boot-maven-plugin</artifactId>
++                <configuration>
++                    <excludes>
++                        <exclude>
++                            <groupId>org.projectlombok</groupId>
++                            <artifactId>lombok</artifactId>
++                        </exclude>
++                    </excludes>
++                </configuration>
++            </plugin>
++        </plugins>
++    </build>
++</project>
+diff --git a/order-system/src/main/java/com/example/ordersystem/OrderSystemApplication.java b/order-system/src/main/java/com/example/ordersystem/OrderSystemApplication.java
+new file mode 100644
+index 0000000000..3afcd79c86
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/OrderSystemApplication.java
+@@ -0,0 +1,14 @@
++package com.example.ordersystem;
++
++import org.springframework.boot.SpringApplication;
++import org.springframework.boot.autoconfigure.SpringBootApplication;
++import org.springframework.scheduling.annotation.EnableScheduling;
++
++@SpringBootApplication
++@EnableScheduling
++public class OrderSystemApplication {
++
++    public static void main(String[] args) {
++        SpringApplication.run(OrderSystemApplication.class, args);
++    }
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/config/RetryConfig.java b/order-system/src/main/java/com/example/ordersystem/config/RetryConfig.java
+new file mode 100644
+index 0000000000..c5cbaca958
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/config/RetryConfig.java
+@@ -0,0 +1,9 @@
++package com.example.ordersystem.config;
++
++import org.springframework.context.annotation.Configuration;
++import org.springframework.retry.annotation.EnableRetry;
++
++@Configuration
++@EnableRetry
++public class RetryConfig {
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/entity/Order.java b/order-system/src/main/java/com/example/ordersystem/entity/Order.java
+new file mode 100644
+index 0000000000..f89ba74f8e
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/entity/Order.java
+@@ -0,0 +1,63 @@
++package com.example.ordersystem.entity;
++
++import jakarta.persistence.Column;
++import jakarta.persistence.Entity;
++import jakarta.persistence.EnumType;
++import jakarta.persistence.Enumerated;
++import jakarta.persistence.GeneratedValue;
++import jakarta.persistence.GenerationType;
++import jakarta.persistence.Id;
++import jakarta.persistence.Table;
++import lombok.AllArgsConstructor;
++import lombok.Builder;
++import lombok.Data;
++import lombok.NoArgsConstructor;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++
++@Entity
++@Table(name = "orders")
++@Data
++@Builder
++@NoArgsConstructor
++@AllArgsConstructor
++public class Order {
++
++    @Id
++    @GeneratedValue(strategy = GenerationType.IDENTITY)
++    private Long id;
++
++    @Column(name = "order_no", unique = true, nullable = false)
++    private String orderNo;
++
++    @Column(name = "user_id", nullable = false)
++    private Long userId;
++
++    @Column(nullable = false)
++    private BigDecimal amount;
++
++    @Enumerated(EnumType.STRING)
++    @Column(nullable = false)
++    private OrderStatus status;
++
++    @Column(name = "timeout_at", nullable = false)
++    private LocalDateTime timeoutAt;
++
++    @Column(name = "created_at", nullable = false)
++    private LocalDateTime createdAt;
++
++    @Column(name = "updated_at")
++    private LocalDateTime updatedAt;
++
++    @Column(name = "cancelled_at")
++    private LocalDateTime cancelledAt;
++
++    public enum OrderStatus {
++        PENDING,
++        PAID,
++        SHIPPED,
++        COMPLETED,
++        CANCELLED
++    }
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/repository/OrderRepository.java b/order-system/src/main/java/com/example/ordersystem/repository/OrderRepository.java
+new file mode 100644
+index 0000000000..43dc243b0c
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/repository/OrderRepository.java
+@@ -0,0 +1,29 @@
++package com.example.ordersystem.repository;
++
++import com.example.ordersystem.entity.Order;
++import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.jpa.repository.Modifying;
++import org.springframework.data.jpa.repository.Query;
++import org.springframework.data.repository.query.Param;
++import org.springframework.stereotype.Repository;
++
++import java.time.LocalDateTime;
++import java.util.List;
++import java.util.Optional;
++
++@Repository
++public interface OrderRepository extends JpaRepository<Order, Long> {
++
++    Optional<Order> findByOrderNo(String orderNo);
++
++    List<Order> findByStatusAndTimeoutAtBefore(Order.OrderStatus status, LocalDateTime timeoutAt);
++
++    @Modifying
++    @Query("UPDATE Order o SET o.status = :newStatus, o.updatedAt = :updatedAt, o.cancelledAt = :cancelledAt " +
++           "WHERE o.id = :orderId AND o.status = :currentStatus")
++    int cancelOrderIfPending(@Param("orderId") Long orderId,
++                             @Param("currentStatus") Order.OrderStatus currentStatus,
++                             @Param("newStatus") Order.OrderStatus newStatus,
++                             @Param("updatedAt") LocalDateTime updatedAt,
++                             @Param("cancelledAt") LocalDateTime cancelledAt);
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/service/OrderService.java b/order-system/src/main/java/com/example/ordersystem/service/OrderService.java
+new file mode 100644
+index 0000000000..7c41895a52
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/service/OrderService.java
+@@ -0,0 +1,68 @@
++package com.example.ordersystem.service;
++
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.repository.OrderRepository;
++import lombok.RequiredArgsConstructor;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.List;
++import java.util.Optional;
++import java.util.UUID;
++
++@Service
++@RequiredArgsConstructor
++public class OrderService {
++
++    private final OrderRepository orderRepository;
++
++    private static final int ORDER_TIMEOUT_MINUTES = 30;
++
++    @Transactional
++    public Order createOrder(Long userId, BigDecimal amount) {
++        LocalDateTime now = LocalDateTime.now();
++        Order order = Order.builder()
++                .orderNo(generateOrderNo())
++                .userId(userId)
++                .amount(amount)
++                .status(Order.OrderStatus.PENDING)
++                .timeoutAt(now.plusMinutes(ORDER_TIMEOUT_MINUTES))
++                .createdAt(now)
++                .updatedAt(now)
++                .build();
++        return orderRepository.save(order);
++    }
++
++    @Transactional(readOnly = true)
++    public Optional<Order> getOrderById(Long id) {
++        return orderRepository.findById(id);
++    }
++
++    @Transactional(readOnly = true)
++    public Optional<Order> getOrderByOrderNo(String orderNo) {
++        return orderRepository.findByOrderNo(orderNo);
++    }
++
++    @Transactional(readOnly = true)
++    public List<Order> getAllOrders() {
++        return orderRepository.findAll();
++    }
++
++    @Transactional
++    public Order payOrder(Long orderId) {
++        Order order = orderRepository.findById(orderId)
++                .orElseThrow(() -> new RuntimeException("Order not found"));
++        if (order.getStatus() != Order.OrderStatus.PENDING) {
++            throw new RuntimeException("Order status is not PENDING");
++        }
++        order.setStatus(Order.OrderStatus.PAID);
++        order.setUpdatedAt(LocalDateTime.now());
++        return orderRepository.save(order);
++    }
++
++    private String generateOrderNo() {
++        return "ORD" + System.currentTimeMillis() + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
++    }
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/service/OrderTimeoutService.java b/order-system/src/main/java/com/example/ordersystem/service/OrderTimeoutService.java
+new file mode 100644
+index 0000000000..99e35fe10e
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/service/OrderTimeoutService.java
+@@ -0,0 +1,104 @@
++package com.example.ordersystem.service;
++
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.repository.OrderRepository;
++import lombok.RequiredArgsConstructor;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.retry.annotation.Backoff;
++import org.springframework.retry.annotation.Retryable;
++import org.springframework.scheduling.annotation.Scheduled;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++import java.time.LocalDateTime;
++import java.util.List;
++
++@Slf4j
++@Service
++@RequiredArgsConstructor
++public class OrderTimeoutService {
++
++    private final OrderRepository orderRepository;
++
++    private static final int BATCH_SIZE = 100;
++
++    @Scheduled(fixedDelayString = "${order.timeout.scan-interval:60000}")
++    public void scanExpiredOrders() {
++        log.debug("Starting scheduled scan for expired pending orders...");
++        processExpiredOrders();
++    }
++
++    @Transactional
++    @Retryable(
++            retryFor = {Exception.class},
++            maxAttempts = 3,
++            backoff = @Backoff(delay = 1000, multiplier = 2)
++    )
++    public void processExpiredOrders() {
++        LocalDateTime now = LocalDateTime.now();
++        List<Order> expiredOrders = orderRepository
++                .findByStatusAndTimeoutAtBefore(Order.OrderStatus.PENDING, now);
++
++        if (expiredOrders.isEmpty()) {
++            log.debug("No expired pending orders found");
++            return;
++        }
++
++        log.info("Found {} expired pending orders to cancel", expiredOrders.size());
++
++        int successCount = 0;
++        int failCount = 0;
++
++        for (Order order : expiredOrders) {
++            try {
++                boolean cancelled = cancelExpiredOrder(order);
++                if (cancelled) {
++                    successCount++;
++                }
++            } catch (Exception e) {
++                failCount++;
++                log.error("Failed to cancel expired order id={}, orderNo={}",
++                        order.getId(), order.getOrderNo(), e);
++            }
++        }
++
++        log.info("Expired orders processing completed. Success: {}, Failed: {}",
++                successCount, failCount);
++    }
++
++    @Transactional
++    protected boolean cancelExpiredOrder(Order order) {
++        LocalDateTime now = LocalDateTime.now();
++
++        int updated = orderRepository.cancelOrderIfPending(
++                order.getId(),
++                Order.OrderStatus.PENDING,
++                Order.OrderStatus.CANCELLED,
++                now,
++                now
++        );
++
++        if (updated > 0) {
++            log.info("Successfully cancelled expired order id={}, orderNo={}",
++                    order.getId(), order.getOrderNo());
++            return true;
++        } else {
++            log.warn("Failed to cancel expired order id={}, orderNo={}, " +
++                    "it may have already been processed or status changed",
++                    order.getId(), order.getOrderNo());
++            return false;
++        }
++    }
++
++    @Transactional
++    @Retryable(
++            retryFor = {Exception.class},
++            maxAttempts = 3,
++            backoff = @Backoff(delay = 500, multiplier = 2)
++    )
++    public boolean manualCancelExpiredOrder(Long orderId) {
++        return orderRepository.findById(orderId)
++                .map(this::cancelExpiredOrder)
++                .orElse(false);
++    }
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/service/RedissonOrderTimeoutService.java b/order-system/src/main/java/com/example/ordersystem/service/RedissonOrderTimeoutService.java
+new file mode 100644
+index 0000000000..2ff70e1f16
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/service/RedissonOrderTimeoutService.java
+@@ -0,0 +1,126 @@
++package com.example.ordersystem.service;
++
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.repository.OrderRepository;
++import lombok.extern.slf4j.Slf4j;
++import org.redisson.api.RBlockingQueue;
++import org.redisson.api.RDelayedQueue;
++import org.redisson.api.RedissonClient;
++import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
++import org.springframework.retry.annotation.Backoff;
++import org.springframework.retry.annotation.Retryable;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++import jakarta.annotation.PostConstruct;
++import java.io.Serializable;
++import java.time.LocalDateTime;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++
++@Slf4j
++@Service
++@ConditionalOnProperty(prefix = "order.timeout", name = "mechanism", havingValue = "redisson",
++        matchIfMissing = false)
++public class RedissonOrderTimeoutService {
++
++    private final RedissonClient redissonClient;
++    private final OrderRepository orderRepository;
++    private final ExecutorService executorService;
++
++    private static final String DELAYED_QUEUE_NAME = "order:timeout:delayed:queue";
++
++    public record OrderTimeoutMessage(Long orderId, String orderNo) implements Serializable {}
++
++    public RedissonOrderTimeoutService(RedissonClient redissonClient, OrderRepository orderRepository) {
++        this.redissonClient = redissonClient;
++        this.orderRepository = orderRepository;
++        this.executorService = Executors.newSingleThreadExecutor();
++    }
++
++    @PostConstruct
++    public void init() {
++        startConsumer();
++    }
++
++    public void scheduleTimeoutCancel(Order order, long delayMinutes) {
++        RBlockingQueue<OrderTimeoutMessage> blockingQueue = redissonClient.getBlockingQueue(DELAYED_QUEUE_NAME);
++        RDelayedQueue<OrderTimeoutMessage> delayedQueue = redissonClient.getDelayedQueue(blockingQueue);
++
++        long delayMillis = delayMinutes * 60 * 1000;
++        OrderTimeoutMessage message = new OrderTimeoutMessage(order.getId(), order.getOrderNo());
++        delayedQueue.offer(message, delayMillis);
++
++        log.info("Scheduled order timeout cancellation: orderId={}, orderNo={}, delay={} minutes",
++                order.getId(), order.getOrderNo(), delayMinutes);
++    }
++
++    private void startConsumer() {
++        executorService.submit(() -> {
++            RBlockingQueue<OrderTimeoutMessage> blockingQueue =
++                    redissonClient.getBlockingQueue(DELAYED_QUEUE_NAME);
++
++            while (!Thread.currentThread().isInterrupted()) {
++                try {
++                    OrderTimeoutMessage message = blockingQueue.take();
++                    processTimeoutOrder(message);
++                } catch (InterruptedException e) {
++                    Thread.currentThread().interrupt();
++                    log.info("Order timeout consumer interrupted");
++                    break;
++                } catch (Exception e) {
++                    log.error("Error processing order timeout message", e);
++                }
++            }
++        });
++    }
++
++    @Transactional
++    @Retryable(
++            retryFor = {Exception.class},
++            maxAttempts = 3,
++            backoff = @Backoff(delay = 1000, multiplier = 2)
++    )
++    protected void processTimeoutOrder(OrderTimeoutMessage message) {
++        log.info("Processing timeout order: orderId={}, orderNo={}", message.orderId(), message.orderNo());
++
++        Order order = orderRepository.findById(message.orderId()).orElse(null);
++        if (order == null) {
++            log.warn("Order not found: orderId={}", message.orderId());
++            return;
++        }
++
++        if (order.getStatus() != Order.OrderStatus.PENDING) {
++            log.info("Order is not in PENDING status, skip cancellation: orderId={}, status={}",
++                    message.orderId(), order.getStatus());
++            return;
++        }
++
++        LocalDateTime now = LocalDateTime.now();
++        if (order.getTimeoutAt().isAfter(now)) {
++            log.info("Order timeout not reached yet, reschedule: orderId={}, timeoutAt={}",
++                    message.orderId(), order.getTimeoutAt());
++            return;
++        }
++
++        int updated = orderRepository.cancelOrderIfPending(
++                message.orderId(),
++                Order.OrderStatus.PENDING,
++                Order.OrderStatus.CANCELLED,
++                now,
++                now
++        );
++
++        if (updated > 0) {
++            log.info("Successfully cancelled timeout order: orderId={}, orderNo={}",
++                    message.orderId(), message.orderNo());
++        } else {
++            log.warn("Failed to cancel timeout order (concurrent modification): orderId={}",
++                    message.orderId());
++        }
++    }
++
++    public void shutdown() {
++        executorService.shutdown();
++    }
++}
+diff --git a/order-system/src/main/resources/application.properties b/order-system/src/main/resources/application.properties
+new file mode 100644
+index 0000000000..b1e4645c83
+--- /dev/null
++++ b/order-system/src/main/resources/application.properties
+@@ -0,0 +1,26 @@
++spring.application.name=order-system
++
++# Database configuration
++spring.datasource.url=jdbc:h2:mem:orderdb
++spring.datasource.driverClassName=org.h2.Driver
++spring.datasource.username=sa
++spring.datasource.password=
++
++spring.h2.console.enabled=true
++spring.h2.console.path=/h2-console
++
++# JPA/Hibernate configuration
++spring.jpa.hibernate.ddl-auto=validate
++spring.jpa.show-sql=true
++spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect
++spring.jpa.properties.hibernate.format_sql=true
++
++# Flyway configuration
++spring.flyway.enabled=true
++spring.flyway.locations=classpath:db/migration
++
++# Scheduling configuration
++spring.task.scheduling.enabled=true
++
++# Logging
++logging.level.com.example.ordersystem=INFO
+diff --git a/order-system/src/main/resources/db/migration/V1__Create_orders_table.sql b/order-system/src/main/resources/db/migration/V1__Create_orders_table.sql
+new file mode 100644
+index 0000000000..b86b729122
+--- /dev/null
++++ b/order-system/src/main/resources/db/migration/V1__Create_orders_table.sql
+@@ -0,0 +1,14 @@
++CREATE TABLE orders (
++    id BIGINT AUTO_INCREMENT PRIMARY KEY,
++    order_no VARCHAR(64) NOT NULL UNIQUE,
++    user_id BIGINT NOT NULL,
++    amount DECIMAL(18,2) NOT NULL,
++    status VARCHAR(20) NOT NULL,
++    timeout_at TIMESTAMP NOT NULL,
++    created_at TIMESTAMP NOT NULL,
++    updated_at TIMESTAMP,
++    cancelled_at TIMESTAMP,
++    INDEX idx_status_timeout (status, timeout_at),
++    INDEX idx_order_no (order_no),
++    INDEX idx_user_id (user_id)
++);
+diff --git a/order-system/src/main/resources/db/migration/V2__Add_timeout_at_index.sql b/order-system/src/main/resources/db/migration/V2__Add_timeout_at_index.sql
+new file mode 100644
+index 0000000000..7117e4913d
+--- /dev/null
++++ b/order-system/src/main/resources/db/migration/V2__Add_timeout_at_index.sql
+@@ -0,0 +1 @@
++CREATE INDEX idx_status_timeout_at ON orders(status, timeout_at);
+diff --git a/order-system/src/test/java/com/example/ordersystem/OrderSystemApplicationTests.java b/order-system/src/test/java/com/example/ordersystem/OrderSystemApplicationTests.java
+new file mode 100644
+index 0000000000..6aed9292de
+--- /dev/null
++++ b/order-system/src/test/java/com/example/ordersystem/OrderSystemApplicationTests.java
+@@ -0,0 +1,12 @@
++package com.example.ordersystem;
++
++import org.junit.jupiter.api.Test;
++import org.springframework.boot.test.context.SpringBootTest;
++
++@SpringBootTest
++class OrderSystemApplicationTests {
++
++    @Test
++    void contextLoads() {
++    }
++}
+diff --git a/order-system/src/test/java/com/example/ordersystem/entity/OrderEntityTest.java b/order-system/src/test/java/com/example/ordersystem/entity/OrderEntityTest.java
+new file mode 100644
+index 0000000000..53dcf7688a
+--- /dev/null
++++ b/order-system/src/test/java/com/example/ordersystem/entity/OrderEntityTest.java
+@@ -0,0 +1,71 @@
++package com.example.ordersystem.entity;
++
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Test;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class OrderEntityTest {
++
++    @Test
++    @DisplayName("Should create order with timeoutAt correctly")
++    void shouldCreateOrderWithTimeoutAt() {
++        LocalDateTime now = LocalDateTime.now();
++        LocalDateTime expectedTimeout = now.plusMinutes(30);
++
++        Order order = Order.builder()
++                .id(1L)
++                .orderNo("ORD001")
++                .userId(123L)
++                .amount(BigDecimal.valueOf(299.99))
++                .status(Order.OrderStatus.PENDING)
++                .timeoutAt(expectedTimeout)
++                .createdAt(now)
++                .build();
++
++        assertEquals(1L, order.getId());
++        assertEquals("ORD001", order.getOrderNo());
++        assertEquals(123L, order.getUserId());
++        assertEquals(BigDecimal.valueOf(299.99), order.getAmount());
++        assertEquals(Order.OrderStatus.PENDING, order.getStatus());
++        assertEquals(expectedTimeout, order.getTimeoutAt());
++        assertEquals(now, order.getCreatedAt());
++    }
++
++    @Test
++    @DisplayName("Should update cancelledAt when order is cancelled")
++    void shouldSetCancelledAtWhenCancelled() {
++        LocalDateTime now = LocalDateTime.now();
++        Order order = Order.builder()
++                .id(1L)
++                .orderNo("ORD001")
++                .userId(123L)
++                .amount(BigDecimal.valueOf(100))
++                .status(Order.OrderStatus.PENDING)
++                .timeoutAt(now.plusMinutes(30))
++                .createdAt(now)
++                .build();
++
++        LocalDateTime cancelledAt = LocalDateTime.now();
++        order.setStatus(Order.OrderStatus.CANCELLED);
++        order.setCancelledAt(cancelledAt);
++        order.setUpdatedAt(cancelledAt);
++
++        assertEquals(Order.OrderStatus.CANCELLED, order.getStatus());
++        assertEquals(cancelledAt, order.getCancelledAt());
++        assertEquals(cancelledAt, order.getUpdatedAt());
++    }
++
++    @Test
++    @DisplayName("All OrderStatus enum values should be accessible")
++    void shouldHaveAllOrderStatusValues() {
++        assertTrue(Order.OrderStatus.valueOf("PENDING") != null);
++        assertTrue(Order.OrderStatus.valueOf("PAID") != null);
++        assertTrue(Order.OrderStatus.valueOf("SHIPPED") != null);
++        assertTrue(Order.OrderStatus.valueOf("COMPLETED") != null);
++        assertTrue(Order.OrderStatus.valueOf("CANCELLED") != null);
++    }
++}
+diff --git a/order-system/src/test/java/com/example/ordersystem/repository/OrderRepositoryTest.java b/order-system/src/test/java/com/example/ordersystem/repository/OrderRepositoryTest.java
+new file mode 100644
+index 0000000000..33f1387591
+--- /dev/null
++++ b/order-system/src/test/java/com/example/ordersystem/repository/OrderRepositoryTest.java
+@@ -0,0 +1,136 @@
++package com.example.ordersystem.repository;
++
++import com.example.ordersystem.entity.Order;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Test;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
++import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++@DataJpaTest
++class OrderRepositoryTest {
++
++    @Autowired
++    private TestEntityManager entityManager;
++
++    @Autowired
++    private OrderRepository orderRepository;
++
++    @Test
++    @DisplayName("Should find expired pending orders")
++    void shouldFindExpiredPendingOrders() {
++        LocalDateTime now = LocalDateTime.now();
++
++        Order expiredPending = Order.builder()
++                .orderNo("ORD001")
++                .userId(1L)
++                .amount(BigDecimal.valueOf(100))
++                .status(Order.OrderStatus.PENDING)
++                .timeoutAt(now.minusMinutes(5))
++                .createdAt(now.minusMinutes(35))
++                .build();
++        entityManager.persist(expiredPending);
++
++        Order notExpiredPending = Order.builder()
++                .orderNo("ORD002")
++                .userId(2L)
++                .amount(BigDecimal.valueOf(200))
++                .status(Order.OrderStatus.PENDING)
++                .timeoutAt(now.plusMinutes(10))
++                .createdAt(now.minusMinutes(20))
++                .build();
++        entityManager.persist(notExpiredPending);
++
++        Order expiredPaid = Order.builder()
++                .orderNo("ORD003")
++                .userId(3L)
++                .amount(BigDecimal.valueOf(300))
++                .status(Order.OrderStatus.PAID)
++                .timeoutAt(now.minusMinutes(5))
++                .createdAt(now.minusMinutes(35))
++                .build();
++        entityManager.persist(expiredPaid);
++
++        entityManager.flush();
++
++        List<Order> result = orderRepository.findByStatusAndTimeoutAtBefore(
++                Order.OrderStatus.PENDING, now);
++
++        assertEquals(1, result.size());
++        assertEquals("ORD001", result.get(0).getOrderNo());
++    }
++
++    @Test
++    @DisplayName("Should update order status only when current status matches (idempotent)")
++    void shouldUpdateOnlyWhenCurrentStatusMatches() {
++        LocalDateTime now = LocalDateTime.now();
++        Order order = Order.builder()
++                .orderNo("ORD001")
++                .userId(1L)
++                .amount(BigDecimal.valueOf(100))
++                .status(Order.OrderStatus.PENDING)
++                .timeoutAt(now.minusMinutes(5))
++                .createdAt(now.minusMinutes(35))
++                .build();
++        Order savedOrder = entityManager.persist(order);
++        entityManager.flush();
++
++        LocalDateTime updatedNow = LocalDateTime.now();
++
++        int firstUpdate = orderRepository.cancelOrderIfPending(
++                savedOrder.getId(),
++                Order.OrderStatus.PENDING,
++                Order.OrderStatus.CANCELLED,
++                updatedNow,
++                updatedNow
++        );
++
++        assertEquals(1, firstUpdate);
++
++        Order updatedOrder = entityManager.find(Order.class, savedOrder.getId());
++        assertEquals(Order.OrderStatus.CANCELLED, updatedOrder.getStatus());
++
++        int secondUpdate = orderRepository.cancelOrderIfPending(
++                savedOrder.getId(),
++                Order.OrderStatus.PENDING,
++                Order.OrderStatus.CANCELLED,
++                updatedNow,
++                updatedNow
++        );
++
++        assertEquals(0, secondUpdate);
++    }
++
++    @Test
++    @DisplayName("Should find order by order number")
++    void shouldFindByOrderNo() {
++        Order order = Order.builder()
++                .orderNo("ORD12345")
++                .userId(1L)
++                .amount(BigDecimal.valueOf(100))
++                .status(Order.OrderStatus.PENDING)
++                .timeoutAt(LocalDateTime.now().plusMinutes(30))
++                .createdAt(LocalDateTime.now())
++                .build();
++        entityManager.persist(order);
++        entityManager.flush();
++
++        var found = orderRepository.findByOrderNo("ORD12345");
++
++        assertTrue(found.isPresent());
++        assertEquals("ORD12345", found.get().getOrderNo());
++    }
++
++    @Test
++    @DisplayName("Should return empty when order not found by order number")
++    void shouldReturnEmptyWhenOrderNotFound() {
++        var found = orderRepository.findByOrderNo("NOT_EXISTS");
++        assertTrue(found.isEmpty());
++    }
++}
+diff --git a/order-system/src/test/java/com/example/ordersystem/service/OrderTimeoutServiceTest.java b/order-system/src/test/java/com/example/ordersystem/service/OrderTimeoutServiceTest.java
+new file mode 100644
+index 0000000000..e9b2b9b7a2
+--- /dev/null
++++ b/order-system/src/test/java/com/example/ordersystem/service/OrderTimeoutServiceTest.java
+@@ -0,0 +1,173 @@
++package com.example.ordersystem.service;
++
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.repository.OrderRepository;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.ArgumentCaptor;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++@ExtendWith(MockitoExtension.class)
++class OrderTimeoutServiceTest {
++
++    @Mock
++    private OrderRepository orderRepository;
++
++    private OrderTimeoutService orderTimeoutService;
++
++    @BeforeEach
++    void setUp() {
++        orderTimeoutService = new OrderTimeoutService(orderRepository);
++    }
++
++    @Test
++    @DisplayName("Should find and process expired pending orders")
++    void shouldProcessExpiredOrders() {
++        LocalDateTime now = LocalDateTime.now();
++        Order expiredOrder1 = createExpiredOrder(1L, "ORD001", now.minusMinutes(5));
++        Order expiredOrder2 = createExpiredOrder(2L, "ORD002", now.minusMinutes(10));
++
++        when(orderRepository.findByStatusAndTimeoutAtBefore(Order.OrderStatus.PENDING, now))
++                .thenReturn(List.of(expiredOrder1, expiredOrder2));
++        when(orderRepository.cancelOrderIfPending(
++                eq(1L), eq(Order.OrderStatus.PENDING), eq(Order.OrderStatus.CANCELLED),
++                any(LocalDateTime.class), any(LocalDateTime.class))
++        ).thenReturn(1);
++        when(orderRepository.cancelOrderIfPending(
++                eq(2L), eq(Order.OrderStatus.PENDING), eq(Order.OrderStatus.CANCELLED),
++                any(LocalDateTime.class), any(LocalDateTime.class))
++        ).thenReturn(1);
++
++        orderTimeoutService.processExpiredOrders();
++
++        verify(orderRepository, times(2)).cancelOrderIfPending(
++                anyLong(), any(), any(), any(), any()
++        );
++    }
++
++    @Test
++    @DisplayName("Should do nothing when no expired orders")
++    void shouldDoNothingWhenNoExpiredOrders() {
++        LocalDateTime now = LocalDateTime.now();
++        when(orderRepository.findByStatusAndTimeoutAtBefore(Order.OrderStatus.PENDING, now))
++                .thenReturn(List.of());
++
++        orderTimeoutService.processExpiredOrders();
++
++        verify(orderRepository, never()).cancelOrderIfPending(
++                anyLong(), any(), any(), any(), any()
++        );
++    }
++
++    @Test
++    @DisplayName("Should return true when successfully cancel expired order")
++    void shouldReturnTrueWhenSuccessfullyCancelExpiredOrder() {
++        Order order = createExpiredOrder(1L, "ORD001", LocalDateTime.now().minusMinutes(5));
++
++        when(orderRepository.cancelOrderIfPending(
++                eq(1L), eq(Order.OrderStatus.PENDING), eq(Order.OrderStatus.CANCELLED),
++                any(LocalDateTime.class), any(LocalDateTime.class))
++        ).thenReturn(1);
++
++        boolean result = orderTimeoutService.cancelExpiredOrder(order);
++
++        assertTrue(result);
++    }
++
++    @Test
++    @DisplayName("Should return false when order already cancelled by another process (idempotency)")
++    void shouldReturnFalseWhenOrderAlreadyCancelledIdempotency() {
++        Order order = createExpiredOrder(1L, "ORD001", LocalDateTime.now().minusMinutes(5));
++
++        when(orderRepository.cancelOrderIfPending(
++                eq(1L), eq(Order.OrderStatus.PENDING), eq(Order.OrderStatus.CANCELLED),
++                any(LocalDateTime.class), any(LocalDateTime.class))
++        ).thenReturn(0);
++
++        boolean result = orderTimeoutService.cancelExpiredOrder(order);
++
++        assertFalse(result);
++    }
++
++    @Test
++    @DisplayName("Should ensure idempotency with conditional update")
++    void shouldEnsureIdempotencyWithConditionalUpdate() {
++        Order order = createExpiredOrder(1L, "ORD001", LocalDateTime.now().minusMinutes(5));
++
++        when(orderRepository.cancelOrderIfPending(
++                eq(1L), eq(Order.OrderStatus.PENDING), eq(Order.OrderStatus.CANCELLED),
++                any(LocalDateTime.class), any(LocalDateTime.class))
++        ).thenReturn(1);
++
++        boolean firstResult = orderTimeoutService.cancelExpiredOrder(order);
++        when(orderRepository.cancelOrderIfPending(
++                eq(1L), eq(Order.OrderStatus.PENDING), eq(Order.OrderStatus.CANCELLED),
++                any(LocalDateTime.class), any(LocalDateTime.class))
++        ).thenReturn(0);
++        boolean secondResult = orderTimeoutService.cancelExpiredOrder(order);
++
++        assertTrue(firstResult);
++        assertFalse(secondResult);
++        verify(orderRepository, times(2)).cancelOrderIfPending(
++                eq(1L), eq(Order.OrderStatus.PENDING), eq(Order.OrderStatus.CANCELLED),
++                any(LocalDateTime.class), any(LocalDateTime.class)
++        );
++    }
++
++    @Test
++    @DisplayName("Manual cancel should return false for non-existent order")
++    void manualCancelShouldReturnFalseForNonExistentOrder() {
++        when(orderRepository.findById(999L)).thenReturn(java.util.Optional.empty());
++
++        boolean result = orderTimeoutService.manualCancelExpiredOrder(999L);
++
++        assertFalse(result);
++    }
++
++    @Test
++    @DisplayName("Should set correct cancelledAt and updatedAt when cancelling")
++    void shouldSetCorrectTimestampsWhenCancelling() {
++        Order order = createExpiredOrder(1L, "ORD001", LocalDateTime.now().minusMinutes(5));
++
++        ArgumentCaptor<LocalDateTime> updatedAtCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
++        ArgumentCaptor<LocalDateTime> cancelledAtCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
++
++        when(orderRepository.cancelOrderIfPending(
++                eq(1L), eq(Order.OrderStatus.PENDING), eq(Order.OrderStatus.CANCELLED),
++                updatedAtCaptor.capture(), cancelledAtCaptor.capture())
++        ).thenReturn(1);
++
++        LocalDateTime beforeCall = LocalDateTime.now();
++        orderTimeoutService.cancelExpiredOrder(order);
++        LocalDateTime afterCall = LocalDateTime.now();
++
++        LocalDateTime updatedAt = updatedAtCaptor.getValue();
++        LocalDateTime cancelledAt = cancelledAtCaptor.getValue();
++
++        assertTrue(updatedAt.isAfter(beforeCall) || updatedAt.isEqual(beforeCall));
++        assertTrue(updatedAt.isBefore(afterCall) || updatedAt.isEqual(afterCall));
++        assertEquals(updatedAt, cancelledAt);
++    }
++
++    private Order createExpiredOrder(Long id, String orderNo, LocalDateTime timeoutAt) {
++        return Order.builder()
++                .id(id)
++                .orderNo(orderNo)
++                .userId(123L)
++                .amount(BigDecimal.valueOf(100))
++                .status(Order.OrderStatus.PENDING)
++                .timeoutAt(timeoutAt)
++                .createdAt(LocalDateTime.now().minusMinutes(40))
++                .build();
++    }
++}
