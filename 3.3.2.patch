@@ -1,0 +1,463 @@
+diff --git a/backend-go/cmd/migrate/main.go b/backend-go/cmd/migrate/main.go
+new file mode 100644
+index 0000000000..591cc8b438
+--- /dev/null
++++ b/backend-go/cmd/migrate/main.go
+@@ -0,0 +1,457 @@
++package main
++
++import (
++	"context"
++	"database/sql"
++	"errors"
++	"fmt"
++	"log/slog"
++	"os"
++	"path/filepath"
++	"regexp"
++	"slices"
++	"strings"
++
++	"github.com/jackc/pgx/v5/stdlib"
++
++	"github.com/infisical/api/internal/config"
++	"github.com/infisical/api/internal/database/pg"
++	"github.com/infisical/api/internal/libs/logutil"
++)
++
++const schemaMigrationsTable = "schema_migrations"
++
++var migrationVersionPattern = regexp.MustCompile(`^([0-9]+)(?:[_-].*)?$`)
++
++type migrationFile struct {
++	Version  string
++	Filename string
++	SQL      string
++}
++
++type migrator struct {
++	db            *sql.DB
++	logger        *slog.Logger
++	migrationsDir string
++}
++
++func main() {
++	logger := slog.New(logutil.NewContextHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
++		Level: config.GetConfiguredSlogLevel(),
++	})))
++	slog.SetDefault(logger)
++
++	ctx := context.Background()
++	if err := run(ctx, os.Args[1:], logger); err != nil {
++		logger.ErrorContext(ctx, "migration command failed", slog.Any("error", err))
++		os.Exit(1)
++	}
++}
++
++func run(ctx context.Context, args []string, logger *slog.Logger) error {
++	if err := validateArgs(args); err != nil {
++		return err
++	}
++
++	connURI := os.Getenv("DB_CONNECTION_URI")
++	if connURI == "" {
++		return fmt.Errorf("DB_CONNECTION_URI is required")
++	}
++
++	migrationsDir, err := resolveMigrationsDir()
++	if err != nil {
++		return err
++	}
++
++	db, err := pg.NewPostgresDB(ctx, connURI, os.Getenv("DB_ROOT_CERT"), nil)
++	if err != nil {
++		return fmt.Errorf("initialize postgres pool: %w", err)
++	}
++	defer db.Close()
++
++	sqlDB := stdlib.OpenDBFromPool(db.Primary())
++	defer sqlDB.Close()
++
++	migrationRunner := &migrator{
++		db:            sqlDB,
++		logger:        logger,
++		migrationsDir: migrationsDir,
++	}
++
++	applied, err := migrationRunner.up(ctx)
++	if err != nil {
++		return err
++	}
++
++	logger.InfoContext(ctx, "migration command completed", slog.Int("applied_count", len(applied)))
++	return nil
++}
++
++func validateArgs(args []string) error {
++	if len(args) == 1 && args[0] == "up" {
++		return nil
++	}
++	if len(args) == 2 && args[0] == "migrate" && args[1] == "up" {
++		return nil
++	}
++	return fmt.Errorf("usage: migrate up")
++}
++
++func resolveMigrationsDir() (string, error) {
++	migrationsDir, err := filepath.Abs("./migrations")
++	if err != nil {
++		return "", fmt.Errorf("resolve migrations directory: %w", err)
++	}
++
++	info, err := os.Stat(migrationsDir)
++	if err != nil {
++		if errors.Is(err, os.ErrNotExist) {
++			return "", fmt.Errorf("migrations directory not found: %s", migrationsDir)
++		}
++		return "", fmt.Errorf("stat migrations directory: %w", err)
++	}
++	if !info.IsDir() {
++		return "", fmt.Errorf("migrations path is not a directory: %s", migrationsDir)
++	}
++
++	return migrationsDir, nil
++}
++
++func (m *migrator) up(ctx context.Context) ([]migrationFile, error) {
++	m.logger.InfoContext(ctx, "running migrations", slog.String("directory", m.migrationsDir))
++
++	migrations, err := loadMigrationFiles(m.migrationsDir)
++	if err != nil {
++		return nil, err
++	}
++
++	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
++	if err != nil {
++		return nil, fmt.Errorf("begin transaction: %w", err)
++	}
++
++	committed := false
++	defer func() {
++		if !committed {
++			_ = tx.Rollback()
++		}
++	}()
++
++	if err := ensureSchemaMigrationsTable(ctx, tx); err != nil {
++		return nil, err
++	}
++
++	appliedVersions, err := loadAppliedVersions(ctx, tx)
++	if err != nil {
++		return nil, err
++	}
++
++	pending := make([]migrationFile, 0, len(migrations))
++	for _, migration := range migrations {
++		if appliedFilename, exists := appliedVersions[migration.Version]; exists {
++			if appliedFilename != migration.Filename {
++				m.logger.WarnContext(ctx, "migration version already applied with different filename",
++					slog.String("version", migration.Version),
++					slog.String("recorded_filename", appliedFilename),
++					slog.String("current_filename", migration.Filename),
++				)
++			}
++			continue
++		}
++		pending = append(pending, migration)
++	}
++
++	if len(pending) == 0 {
++		if err := tx.Commit(); err != nil {
++			return nil, fmt.Errorf("commit empty migration transaction: %w", err)
++		}
++		committed = true
++		m.logger.InfoContext(ctx, "no pending migrations")
++		return nil, nil
++	}
++
++	applied := make([]migrationFile, 0, len(pending))
++	for _, migration := range pending {
++		statements, err := splitSQLStatements(migration.SQL)
++		if err != nil {
++			return nil, fmt.Errorf("parse migration %s: %w", migration.Filename, err)
++		}
++		if len(statements) == 0 {
++			return nil, fmt.Errorf("migration %s is empty", migration.Filename)
++		}
++
++		m.logger.InfoContext(ctx, "applying migration",
++			slog.String("version", migration.Version),
++			slog.String("filename", migration.Filename),
++			slog.Int("statement_count", len(statements)),
++		)
++
++		for _, statement := range statements {
++			if _, err := tx.ExecContext(ctx, statement); err != nil {
++				return nil, fmt.Errorf("execute migration %s: %w", migration.Filename, err)
++			}
++		}
++
++		if _, err := tx.ExecContext(ctx,
++			`INSERT INTO `+schemaMigrationsTable+` (version, filename) VALUES ($1, $2)`,
++			migration.Version,
++			migration.Filename,
++		); err != nil {
++			return nil, fmt.Errorf("record migration %s: %w", migration.Filename, err)
++		}
++
++		m.logger.InfoContext(ctx, "migration applied",
++			slog.String("version", migration.Version),
++			slog.String("filename", migration.Filename),
++		)
++		applied = append(applied, migration)
++	}
++
++	if err := tx.Commit(); err != nil {
++		return nil, fmt.Errorf("commit migrations: %w", err)
++	}
++	committed = true
++
++	return applied, nil
++}
++
++func ensureSchemaMigrationsTable(ctx context.Context, tx *sql.Tx) error {
++	_, err := tx.ExecContext(ctx, `
++		CREATE TABLE IF NOT EXISTS `+schemaMigrationsTable+` (
++			version TEXT PRIMARY KEY,
++			filename TEXT NOT NULL UNIQUE,
++			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
++		)
++	`)
++	if err != nil {
++		return fmt.Errorf("ensure %s table: %w", schemaMigrationsTable, err)
++	}
++	return nil
++}
++
++func loadAppliedVersions(ctx context.Context, tx *sql.Tx) (map[string]string, error) {
++	rows, err := tx.QueryContext(ctx, `SELECT version, filename FROM `+schemaMigrationsTable)
++	if err != nil {
++		return nil, fmt.Errorf("query applied migrations: %w", err)
++	}
++	defer rows.Close()
++
++	applied := make(map[string]string)
++	for rows.Next() {
++		var version string
++		var filename string
++		if err := rows.Scan(&version, &filename); err != nil {
++			return nil, fmt.Errorf("scan applied migration: %w", err)
++		}
++		applied[version] = filename
++	}
++	if err := rows.Err(); err != nil {
++		return nil, fmt.Errorf("iterate applied migrations: %w", err)
++	}
++
++	return applied, nil
++}
++
++func loadMigrationFiles(migrationsDir string) ([]migrationFile, error) {
++	entries, err := os.ReadDir(migrationsDir)
++	if err != nil {
++		return nil, fmt.Errorf("read migrations directory: %w", err)
++	}
++
++	migrationNames := make([]string, 0, len(entries))
++	for _, entry := range entries {
++		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sql" {
++			continue
++		}
++		migrationNames = append(migrationNames, entry.Name())
++	}
++
++	slices.Sort(migrationNames)
++
++	seenVersions := make(map[string]string, len(migrationNames))
++	migrations := make([]migrationFile, 0, len(migrationNames))
++	for _, name := range migrationNames {
++		version := migrationVersion(name)
++		if existing, exists := seenVersions[version]; exists {
++			return nil, fmt.Errorf("duplicate migration version %q in %s and %s", version, existing, name)
++		}
++		seenVersions[version] = name
++
++		sqlContent, err := os.ReadFile(filepath.Join(migrationsDir, name))
++		if err != nil {
++			return nil, fmt.Errorf("read migration %s: %w", name, err)
++		}
++
++		migrations = append(migrations, migrationFile{
++			Version:  version,
++			Filename: name,
++			SQL:      string(sqlContent),
++		})
++	}
++
++	return migrations, nil
++}
++
++func migrationVersion(filename string) string {
++	base := strings.TrimSuffix(filename, filepath.Ext(filename))
++	matches := migrationVersionPattern.FindStringSubmatch(base)
++	if len(matches) == 2 {
++		return matches[1]
++	}
++	return base
++}
++
++func splitSQLStatements(input string) ([]string, error) {
++	var statements []string
++	var current strings.Builder
++
++	inSingleQuote := false
++	inDoubleQuote := false
++	inLineComment := false
++	inBlockComment := false
++	dollarTag := ""
++
++	for i := 0; i < len(input); i++ {
++		ch := input[i]
++		next := byte(0)
++		if i+1 < len(input) {
++			next = input[i+1]
++		}
++
++		if inLineComment {
++			current.WriteByte(ch)
++			if ch == '\n' {
++				inLineComment = false
++			}
++			continue
++		}
++
++		if inBlockComment {
++			current.WriteByte(ch)
++			if ch == '*' && next == '/' {
++				current.WriteByte(next)
++				i++
++				inBlockComment = false
++			}
++			continue
++		}
++
++		if dollarTag != "" {
++			current.WriteByte(ch)
++			if ch == '$' && strings.HasPrefix(input[i:], dollarTag) {
++				current.WriteString(dollarTag[1:])
++				i += len(dollarTag) - 1
++				dollarTag = ""
++			}
++			continue
++		}
++
++		if inSingleQuote {
++			current.WriteByte(ch)
++			if ch == '\'' {
++				if next == '\'' {
++					current.WriteByte(next)
++					i++
++					continue
++				}
++				inSingleQuote = false
++			}
++			continue
++		}
++
++		if inDoubleQuote {
++			current.WriteByte(ch)
++			if ch == '"' {
++				if next == '"' {
++					current.WriteByte(next)
++					i++
++					continue
++				}
++				inDoubleQuote = false
++			}
++			continue
++		}
++
++		if ch == '-' && next == '-' {
++			current.WriteByte(ch)
++			current.WriteByte(next)
++			i++
++			inLineComment = true
++			continue
++		}
++
++		if ch == '/' && next == '*' {
++			current.WriteByte(ch)
++			current.WriteByte(next)
++			i++
++			inBlockComment = true
++			continue
++		}
++
++		if ch == '\'' {
++			current.WriteByte(ch)
++			inSingleQuote = true
++			continue
++		}
++
++		if ch == '"' {
++			current.WriteByte(ch)
++			inDoubleQuote = true
++			continue
++		}
++
++		if ch == '$' {
++			tag := readDollarTag(input[i:])
++			if tag != "" {
++				current.WriteString(tag)
++				i += len(tag) - 1
++				dollarTag = tag
++				continue
++			}
++		}
++
++		if ch == ';' {
++			statement := strings.TrimSpace(current.String())
++			if statement != "" {
++				statements = append(statements, statement)
++			}
++			current.Reset()
++			continue
++		}
++
++		current.WriteByte(ch)
++	}
++
++	if inSingleQuote || inDoubleQuote || inBlockComment || dollarTag != "" {
++		return nil, fmt.Errorf("unterminated SQL construct")
++	}
++
++	statement := strings.TrimSpace(current.String())
++	if statement != "" {
++		statements = append(statements, statement)
++	}
++
++	return statements, nil
++}
++
++func readDollarTag(input string) string {
++	if len(input) < 2 || input[0] != '$' {
++		return ""
++	}
++
++	end := strings.IndexByte(input[1:], '$')
++	if end < 0 {
++		return ""
++	}
++	end++
++
++	tag := input[:end+1]
++	for i := 1; i < len(tag)-1; i++ {
++		ch := tag[i]
++		if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') && ch != '_' {
++			return ""
++		}
++	}
++
++	return tag
++}
