@@ -1,0 +1,1145 @@
+diff --git a/order-system/pom.xml b/order-system/pom.xml
+new file mode 100644
+index 0000000000..310c0405d8
+--- /dev/null
++++ b/order-system/pom.xml
+@@ -0,0 +1,78 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<project xmlns="http://maven.apache.org/POM/4.0.0"
++         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
++    <modelVersion>4.0.0</modelVersion>
++
++    <parent>
++        <groupId>org.springframework.boot</groupId>
++        <artifactId>spring-boot-starter-parent</artifactId>
++        <version>3.2.5</version>
++        <relativePath/>
++    </parent>
++
++    <groupId>com.example</groupId>
++    <artifactId>order-system</artifactId>
++    <version>1.0.0-SNAPSHOT</version>
++    <name>order-system</name>
++    <description>Order System with Timeout Auto-Cancellation</description>
++
++    <properties>
++        <java.version>17</java.version>
++    </properties>
++
++    <dependencies>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-data-jpa</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-web</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-validation</artifactId>
++        </dependency>
++
++        <dependency>
++            <groupId>org.postgresql</groupId>
++            <artifactId>postgresql</artifactId>
++            <scope>runtime</scope>
++        </dependency>
++        <dependency>
++            <groupId>com.h2database</groupId>
++            <artifactId>h2</artifactId>
++            <scope>test</scope>
++        </dependency>
++
++        <dependency>
++            <groupId>org.flywaydb</groupId>
++            <artifactId>flyway-core</artifactId>
++        </dependency>
++        <dependency>
++            <groupId>org.flywaydb</groupId>
++            <artifactId>flyway-database-postgresql</artifactId>
++        </dependency>
++
++        <dependency>
++            <groupId>org.springframework.boot</groupId>
++            <artifactId>spring-boot-starter-test</artifactId>
++            <scope>test</scope>
++        </dependency>
++        <dependency>
++            <groupId>org.mockito</groupId>
++            <artifactId>mockito-core</artifactId>
++            <scope>test</scope>
++        </dependency>
++    </dependencies>
++
++    <build>
++        <plugins>
++            <plugin>
++                <groupId>org.springframework.boot</groupId>
++                <artifactId>spring-boot-maven-plugin</artifactId>
++            </plugin>
++        </plugins>
++    </build>
++</project>
+diff --git a/order-system/src/main/java/com/example/ordersystem/OrderSystemApplication.java b/order-system/src/main/java/com/example/ordersystem/OrderSystemApplication.java
+new file mode 100644
+index 0000000000..3afcd79c86
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/OrderSystemApplication.java
+@@ -0,0 +1,14 @@
++package com.example.ordersystem;
++
++import org.springframework.boot.SpringApplication;
++import org.springframework.boot.autoconfigure.SpringBootApplication;
++import org.springframework.scheduling.annotation.EnableScheduling;
++
++@SpringBootApplication
++@EnableScheduling
++public class OrderSystemApplication {
++
++    public static void main(String[] args) {
++        SpringApplication.run(OrderSystemApplication.class, args);
++    }
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/config/OrderTimeoutProperties.java b/order-system/src/main/java/com/example/ordersystem/config/OrderTimeoutProperties.java
+new file mode 100644
+index 0000000000..1b9de30c1b
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/config/OrderTimeoutProperties.java
+@@ -0,0 +1,46 @@
++package com.example.ordersystem.config;
++
++import org.springframework.boot.context.properties.ConfigurationProperties;
++import org.springframework.stereotype.Component;
++
++@Component
++@ConfigurationProperties(prefix = "order.timeout")
++public class OrderTimeoutProperties {
++
++    private int minutes = 30;
++    private String cron = "0 */1 * * * *";
++    private int batchSize = 100;
++    private int maxRetry = 3;
++
++    public int getMinutes() {
++        return minutes;
++    }
++
++    public void setMinutes(int minutes) {
++        this.minutes = minutes;
++    }
++
++    public String getCron() {
++        return cron;
++    }
++
++    public void setCron(String cron) {
++        this.cron = cron;
++    }
++
++    public int getBatchSize() {
++        return batchSize;
++    }
++
++    public void setBatchSize(int batchSize) {
++        this.batchSize = batchSize;
++    }
++
++    public int getMaxRetry() {
++        return maxRetry;
++    }
++
++    public void setMaxRetry(int maxRetry) {
++        this.maxRetry = maxRetry;
++    }
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/config/SchedulingConfig.java b/order-system/src/main/java/com/example/ordersystem/config/SchedulingConfig.java
+new file mode 100644
+index 0000000000..dae95dd98a
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/config/SchedulingConfig.java
+@@ -0,0 +1,9 @@
++package com.example.ordersystem.config;
++
++import org.springframework.context.annotation.Configuration;
++import org.springframework.scheduling.annotation.EnableScheduling;
++
++@Configuration
++@EnableScheduling
++public class SchedulingConfig {
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/entity/Order.java b/order-system/src/main/java/com/example/ordersystem/entity/Order.java
+new file mode 100644
+index 0000000000..e366f409ff
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/entity/Order.java
+@@ -0,0 +1,178 @@
++package com.example.ordersystem.entity;
++
++import jakarta.persistence.Column;
++import jakarta.persistence.Entity;
++import jakarta.persistence.EnumType;
++import jakarta.persistence.Enumerated;
++import jakarta.persistence.GeneratedValue;
++import jakarta.persistence.GenerationType;
++import jakarta.persistence.Id;
++import jakarta.persistence.Table;
++import jakarta.persistence.Version;
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++
++@Entity
++@Table(name = "orders")
++public class Order {
++
++    @Id
++    @GeneratedValue(strategy = GenerationType.IDENTITY)
++    private Long id;
++
++    @Column(nullable = false, unique = true, length = 64)
++    private String orderNo;
++
++    @Column(nullable = false, length = 64)
++    private String userId;
++
++    @Column(nullable = false, precision = 12, scale = 2)
++    private BigDecimal amount;
++
++    @Enumerated(EnumType.STRING)
++    @Column(nullable = false, length = 32)
++    private OrderStatus status;
++
++    @Column(name = "timeout_at")
++    private LocalDateTime timeoutAt;
++
++    @Column(name = "retry_count", nullable = false)
++    private Integer retryCount = 0;
++
++    @Version
++    private Long version;
++
++    @Column(name = "created_at", nullable = false, updatable = false)
++    private LocalDateTime createdAt;
++
++    @Column(name = "updated_at", nullable = false)
++    private LocalDateTime updatedAt;
++
++    @Column(name = "cancel_reason", length = 256)
++    private String cancelReason;
++
++    public Order() {}
++
++    public static Order create(String orderNo, String userId, BigDecimal amount, LocalDateTime timeoutAt) {
++        Order order = new Order();
++        order.orderNo = orderNo;
++        order.userId = userId;
++        order.amount = amount;
++        order.status = OrderStatus.PENDING;
++        order.timeoutAt = timeoutAt;
++        order.retryCount = 0;
++        LocalDateTime now = LocalDateTime.now();
++        order.createdAt = now;
++        order.updatedAt = now;
++        return order;
++    }
++
++    public boolean isTimeout() {
++        return status == OrderStatus.PENDING
++                && timeoutAt != null
++                && LocalDateTime.now().isAfter(timeoutAt);
++    }
++
++    public void markTimeoutCancelled() {
++        if (this.status != OrderStatus.PENDING) {
++            throw new IllegalStateException(
++                    "Order cannot be cancelled: current status=" + this.status);
++        }
++        this.status = OrderStatus.TIMEOUT_CANCELLED;
++        this.cancelReason = "Order timed out after " + timeoutAt;
++        this.updatedAt = LocalDateTime.now();
++    }
++
++    public void incrementRetryCount() {
++        this.retryCount++;
++        this.updatedAt = LocalDateTime.now();
++    }
++
++    public Long getId() {
++        return id;
++    }
++
++    public void setId(Long id) {
++        this.id = id;
++    }
++
++    public String getOrderNo() {
++        return orderNo;
++    }
++
++    public void setOrderNo(String orderNo) {
++        this.orderNo = orderNo;
++    }
++
++    public String getUserId() {
++        return userId;
++    }
++
++    public void setUserId(String userId) {
++        this.userId = userId;
++    }
++
++    public BigDecimal getAmount() {
++        return amount;
++    }
++
++    public void setAmount(BigDecimal amount) {
++        this.amount = amount;
++    }
++
++    public OrderStatus getStatus() {
++        return status;
++    }
++
++    public void setStatus(OrderStatus status) {
++        this.status = status;
++    }
++
++    public LocalDateTime getTimeoutAt() {
++        return timeoutAt;
++    }
++
++    public void setTimeoutAt(LocalDateTime timeoutAt) {
++        this.timeoutAt = timeoutAt;
++    }
++
++    public Integer getRetryCount() {
++        return retryCount;
++    }
++
++    public void setRetryCount(Integer retryCount) {
++        this.retryCount = retryCount;
++    }
++
++    public Long getVersion() {
++        return version;
++    }
++
++    public void setVersion(Long version) {
++        this.version = version;
++    }
++
++    public LocalDateTime getCreatedAt() {
++        return createdAt;
++    }
++
++    public void setCreatedAt(LocalDateTime createdAt) {
++        this.createdAt = createdAt;
++    }
++
++    public LocalDateTime getUpdatedAt() {
++        return updatedAt;
++    }
++
++    public void setUpdatedAt(LocalDateTime updatedAt) {
++        this.updatedAt = updatedAt;
++    }
++
++    public String getCancelReason() {
++        return cancelReason;
++    }
++
++    public void setCancelReason(String cancelReason) {
++        this.cancelReason = cancelReason;
++    }
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/entity/OrderStatus.java b/order-system/src/main/java/com/example/ordersystem/entity/OrderStatus.java
+new file mode 100644
+index 0000000000..92327d2fe9
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/entity/OrderStatus.java
+@@ -0,0 +1,8 @@
++package com.example.ordersystem.entity;
++
++public enum OrderStatus {
++    PENDING,
++    CONFIRMED,
++    CANCELLED,
++    TIMEOUT_CANCELLED
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/repository/OrderRepository.java b/order-system/src/main/java/com/example/ordersystem/repository/OrderRepository.java
+new file mode 100644
+index 0000000000..b33e4ddd3e
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/repository/OrderRepository.java
+@@ -0,0 +1,38 @@
++package com.example.ordersystem.repository;
++
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.entity.OrderStatus;
++import java.time.LocalDateTime;
++import java.util.List;
++import java.util.Optional;
++import org.springframework.data.domain.Pageable;
++import org.springframework.data.jpa.repository.JpaRepository;
++import org.springframework.data.jpa.repository.Modifying;
++import org.springframework.data.jpa.repository.Query;
++import org.springframework.data.repository.query.Param;
++import org.springframework.stereotype.Repository;
++
++@Repository
++public interface OrderRepository extends JpaRepository<Order, Long> {
++
++    Optional<Order> findByOrderNo(String orderNo);
++
++    List<Order> findByStatusAndTimeoutAtBefore(OrderStatus status, LocalDateTime timeoutThreshold, Pageable pageable);
++
++    @Modifying
++    @Query("UPDATE Order o SET o.status = :targetStatus, o.cancelReason = :reason, o.updatedAt = CURRENT_TIMESTAMP "
++            + "WHERE o.id = :id AND o.status = :expectedStatus AND o.version = :version")
++    int cancelOrderWithOptimisticLock(
++            @Param("id") Long id,
++            @Param("expectedStatus") OrderStatus expectedStatus,
++            @Param("targetStatus") OrderStatus targetStatus,
++            @Param("reason") String reason,
++            @Param("version") Long version);
++
++    @Query("SELECT o FROM Order o WHERE o.status = :status AND o.timeoutAt < :threshold AND o.retryCount < :maxRetry")
++    List<Order> findTimeoutOrdersWithRetryCapacity(
++            @Param("status") OrderStatus status,
++            @Param("threshold") LocalDateTime threshold,
++            @Param("maxRetry") int maxRetry,
++            Pageable pageable);
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/service/OrderService.java b/order-system/src/main/java/com/example/ordersystem/service/OrderService.java
+new file mode 100644
+index 0000000000..49cc6bfab7
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/service/OrderService.java
+@@ -0,0 +1,40 @@
++package com.example.ordersystem.service;
++
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.repository.OrderRepository;
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.UUID;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++@Service
++public class OrderService {
++
++    private final OrderRepository orderRepository;
++    private final OrderTimeoutService orderTimeoutService;
++
++    public OrderService(OrderRepository orderRepository,
++                        OrderTimeoutService orderTimeoutService) {
++        this.orderRepository = orderRepository;
++        this.orderTimeoutService = orderTimeoutService;
++    }
++
++    @Transactional
++    public Order createOrder(String userId, BigDecimal amount) {
++        String orderNo = generateOrderNo();
++        LocalDateTime timeoutAt = orderTimeoutService.calculateTimeoutAt();
++        Order order = Order.create(orderNo, userId, amount, timeoutAt);
++        return orderRepository.save(order);
++    }
++
++    @Transactional(readOnly = true)
++    public Order getOrderByOrderNo(String orderNo) {
++        return orderRepository.findByOrderNo(orderNo)
++                .orElseThrow(() -> new IllegalArgumentException("Order not found: " + orderNo));
++    }
++
++    private String generateOrderNo() {
++        return "ORD-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase();
++    }
++}
+diff --git a/order-system/src/main/java/com/example/ordersystem/service/OrderTimeoutService.java b/order-system/src/main/java/com/example/ordersystem/service/OrderTimeoutService.java
+new file mode 100644
+index 0000000000..f51bc624bb
+--- /dev/null
++++ b/order-system/src/main/java/com/example/ordersystem/service/OrderTimeoutService.java
+@@ -0,0 +1,127 @@
++package com.example.ordersystem.service;
++
++import com.example.ordersystem.config.OrderTimeoutProperties;
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.entity.OrderStatus;
++import com.example.ordersystem.repository.OrderRepository;
++import java.time.LocalDateTime;
++import java.util.List;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++import org.springframework.data.domain.PageRequest;
++import org.springframework.orm.ObjectOptimisticLockingFailureException;
++import org.springframework.scheduling.annotation.Scheduled;
++import org.springframework.stereotype.Service;
++import org.springframework.transaction.annotation.Transactional;
++
++@Service
++public class OrderTimeoutService {
++
++    private static final Logger log = LoggerFactory.getLogger(OrderTimeoutService.class);
++
++    private final OrderRepository orderRepository;
++    private final OrderTimeoutProperties properties;
++
++    public OrderTimeoutService(OrderRepository orderRepository,
++                               OrderTimeoutProperties properties) {
++        this.orderRepository = orderRepository;
++        this.properties = properties;
++    }
++
++    @Scheduled(cron = "${order.timeout.scan.cron}")
++    public void scanAndCancelTimeoutOrders() {
++        log.info("Starting timeout order scan...");
++        LocalDateTime now = LocalDateTime.now();
++        int totalCancelled = 0;
++        int totalFailed = 0;
++
++        List<Order> timeoutOrders = orderRepository.findTimeoutOrdersWithRetryCapacity(
++                OrderStatus.PENDING,
++                now,
++                properties.getMaxRetry(),
++                PageRequest.of(0, properties.getBatchSize())
++        );
++
++        log.info("Found {} timeout orders to process", timeoutOrders.size());
++
++        for (Order order : timeoutOrders) {
++            try {
++                boolean cancelled = cancelOrderWithIdempotency(order);
++                if (cancelled) {
++                    totalCancelled++;
++                    log.info("Order [{}] cancelled due to timeout, retryCount={}",
++                            order.getOrderNo(), order.getRetryCount());
++                } else {
++                    totalFailed++;
++                    log.warn("Order [{}] cancellation skipped (concurrent modification), retryCount={}",
++                            order.getOrderNo(), order.getRetryCount());
++                }
++            } catch (ObjectOptimisticLockingFailureException e) {
++                totalFailed++;
++                log.warn("Order [{}] optimistic lock conflict, will retry next scan",
++                        order.getOrderNo());
++            } catch (Exception e) {
++                totalFailed++;
++                handleRetry(order, e);
++            }
++        }
++
++        log.info("Timeout scan completed: cancelled={}, failed={}", totalCancelled, totalFailed);
++    }
++
++    @Transactional
++    public boolean cancelOrderWithIdempotency(Order order) {
++        Order freshOrder = orderRepository.findById(order.getId()).orElse(null);
++        if (freshOrder == null) {
++            log.warn("Order [{}] not found, skipping", order.getId());
++            return false;
++        }
++
++        if (freshOrder.getStatus() != OrderStatus.PENDING) {
++            log.info("Order [{}] status is {}, not PENDING, skipping (idempotent)",
++                    freshOrder.getOrderNo(), freshOrder.getStatus());
++            return true;
++        }
++
++        int updated = orderRepository.cancelOrderWithOptimisticLock(
++                freshOrder.getId(),
++                OrderStatus.PENDING,
++                OrderStatus.TIMEOUT_CANCELLED,
++                "Order timed out at " + freshOrder.getTimeoutAt(),
++                freshOrder.getVersion()
++        );
++
++        if (updated == 0) {
++            freshOrder.incrementRetryCount();
++            orderRepository.save(freshOrder);
++            return false;
++        }
++
++        return true;
++    }
++
++    private void handleRetry(Order order, Exception e) {
++        if (order.getRetryCount() >= properties.getMaxRetry()) {
++            log.error("Order [{}] exceeded max retry count {}, giving up. Error: {}",
++                    order.getOrderNo(), properties.getMaxRetry(), e.getMessage());
++            return;
++        }
++
++        try {
++            Order freshOrder = orderRepository.findById(order.getId()).orElse(null);
++            if (freshOrder != null && freshOrder.getStatus() == OrderStatus.PENDING) {
++                freshOrder.incrementRetryCount();
++                orderRepository.save(freshOrder);
++                log.warn("Order [{}] retry count incremented to {}, will retry next scan",
++                        freshOrder.getOrderNo(), freshOrder.getRetryCount());
++            }
++        } catch (Exception retryException) {
++            log.error("Failed to increment retry count for order [{}]: {}",
++                    order.getOrderNo(), retryException.getMessage());
++        }
++    }
++
++    public LocalDateTime calculateTimeoutAt() {
++        return LocalDateTime.now().plusMinutes(properties.getMinutes());
++    }
++}
+diff --git a/order-system/src/main/resources/application.yml b/order-system/src/main/resources/application.yml
+new file mode 100644
+index 0000000000..ce85404cf0
+--- /dev/null
++++ b/order-system/src/main/resources/application.yml
+@@ -0,0 +1,16 @@
++spring.datasource.url=jdbc:postgresql://localhost:5432/order_system
++spring.datasource.username=postgres
++spring.datasource.password=postgres
++spring.datasource.driver-class-name=org.postgresql.Driver
++
++spring.jpa.hibernate.ddl-auto=validate
++spring.jpa.show-sql=false
++spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
++
++spring.flyway.enabled=true
++spring.flyway.locations=classpath:db/migration
++
++order.timeout.minutes=30
++order.timeout.scan.cron=0 */1 * * * *
++order.timeout.batch-size=100
++order.timeout.max-retry=3
+diff --git a/order-system/src/main/resources/db/migration/V1__Create_orders_table.sql b/order-system/src/main/resources/db/migration/V1__Create_orders_table.sql
+new file mode 100644
+index 0000000000..81702b473b
+--- /dev/null
++++ b/order-system/src/main/resources/db/migration/V1__Create_orders_table.sql
+@@ -0,0 +1,16 @@
++CREATE TABLE orders (
++    id              BIGSERIAL       PRIMARY KEY,
++    order_no        VARCHAR(64)     NOT NULL,
++    user_id         VARCHAR(64)     NOT NULL,
++    amount          DECIMAL(12, 2)  NOT NULL,
++    status          VARCHAR(32)     NOT NULL DEFAULT 'PENDING',
++    timeout_at      TIMESTAMP,
++    retry_count     INTEGER         NOT NULL DEFAULT 0,
++    version         BIGINT,
++    created_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    updated_at      TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    cancel_reason   VARCHAR(256)
++);
++
++CREATE UNIQUE INDEX idx_orders_order_no ON orders (order_no);
++CREATE INDEX idx_orders_status_timeout ON orders (status, timeout_at);
+diff --git a/order-system/src/main/resources/db/migration/V2__add_timeout_fields.sql b/order-system/src/main/resources/db/migration/V2__add_timeout_fields.sql
+new file mode 100644
+index 0000000000..44f64edd22
+--- /dev/null
++++ b/order-system/src/main/resources/db/migration/V2__add_timeout_fields.sql
+@@ -0,0 +1,5 @@
++ALTER TABLE orders ADD COLUMN IF NOT EXISTS timeout_at TIMESTAMP;
++ALTER TABLE orders ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
++ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason VARCHAR(256);
++
++CREATE INDEX IF NOT EXISTS idx_orders_status_timeout ON orders (status, timeout_at);
+diff --git a/order-system/src/test/java/com/example/ordersystem/entity/OrderTest.java b/order-system/src/test/java/com/example/ordersystem/entity/OrderTest.java
+new file mode 100644
+index 0000000000..28d9caac5d
+--- /dev/null
++++ b/order-system/src/test/java/com/example/ordersystem/entity/OrderTest.java
+@@ -0,0 +1,133 @@
++package com.example.ordersystem.entity;
++
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Nested;
++import org.junit.jupiter.api.Test;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class OrderTest {
++
++    private Order createPendingOrder() {
++        return Order.create("ORD-001", "user-001", new BigDecimal("99.99"),
++                LocalDateTime.now().plusMinutes(30));
++    }
++
++    @Nested
++    @DisplayName("Order.create factory method")
++    class CreateTests {
++
++        @Test
++        @DisplayName("Should create order with PENDING status")
++        void shouldCreatePendingOrder() {
++            LocalDateTime timeoutAt = LocalDateTime.now().plusMinutes(30);
++            Order order = Order.create("ORD-001", "user-001", new BigDecimal("99.99"), timeoutAt);
++
++            assertEquals("ORD-001", order.getOrderNo());
++            assertEquals("user-001", order.getUserId());
++            assertEquals(new BigDecimal("99.99"), order.getAmount());
++            assertEquals(OrderStatus.PENDING, order.getStatus());
++            assertEquals(timeoutAt, order.getTimeoutAt());
++            assertEquals(0, order.getRetryCount());
++            assertNotNull(order.getCreatedAt());
++            assertNotNull(order.getUpdatedAt());
++        }
++    }
++
++    @Nested
++    @DisplayName("isTimeout check")
++    class IsTimeoutTests {
++
++        @Test
++        @DisplayName("Should return true when PENDING and timeout has passed")
++        void shouldReturnTrueWhenTimeoutPassed() {
++            Order order = Order.create("ORD-001", "user-001", new BigDecimal("99.99"),
++                    LocalDateTime.now().minusMinutes(1));
++
++            assertTrue(order.isTimeout());
++        }
++
++        @Test
++        @DisplayName("Should return false when PENDING but timeout not reached")
++        void shouldReturnFalseWhenNotTimedOut() {
++            Order order = createPendingOrder();
++
++            assertFalse(order.isTimeout());
++        }
++
++        @Test
++        @DisplayName("Should return false when not PENDING status")
++        void shouldReturnFalseWhenNotPending() {
++            Order order = createPendingOrder();
++            order.setStatus(OrderStatus.CONFIRMED);
++
++            assertFalse(order.isTimeout());
++        }
++
++        @Test
++        @DisplayName("Should return false when timeoutAt is null")
++        void shouldReturnFalseWhenTimeoutAtNull() {
++            Order order = createPendingOrder();
++            order.setTimeoutAt(null);
++
++            assertFalse(order.isTimeout());
++        }
++    }
++
++    @Nested
++    @DisplayName("markTimeoutCancelled")
++    class MarkTimeoutCancelledTests {
++
++        @Test
++        @DisplayName("Should change PENDING to TIMEOUT_CANCELLED")
++        void shouldChangeToTimeoutCancelled() {
++            Order order = createPendingOrder();
++            LocalDateTime beforeMark = order.getUpdatedAt();
++
++            order.markTimeoutCancelled();
++
++            assertEquals(OrderStatus.TIMEOUT_CANCELLED, order.getStatus());
++            assertNotNull(order.getCancelReason());
++            assertTrue(order.getCancelReason().contains("timed out"));
++        }
++
++        @Test
++        @DisplayName("Should throw when order is not PENDING")
++        void shouldThrowWhenNotPending() {
++            Order order = createPendingOrder();
++            order.setStatus(OrderStatus.CONFIRMED);
++
++            assertThrows(IllegalStateException.class, order::markTimeoutCancelled);
++        }
++
++        @Test
++        @DisplayName("Should be idempotent-safe: second call on same status throws")
++        void shouldBeIdempotentSafe() {
++            Order order = createPendingOrder();
++            order.markTimeoutCancelled();
++
++            assertThrows(IllegalStateException.class, order::markTimeoutCancelled);
++        }
++    }
++
++    @Nested
++    @DisplayName("incrementRetryCount")
++    class RetryCountTests {
++
++        @Test
++        @DisplayName("Should increment retry count")
++        void shouldIncrementRetryCount() {
++            Order order = createPendingOrder();
++            assertEquals(0, order.getRetryCount());
++
++            order.incrementRetryCount();
++            assertEquals(1, order.getRetryCount());
++
++            order.incrementRetryCount();
++            assertEquals(2, order.getRetryCount());
++        }
++    }
++}
+diff --git a/order-system/src/test/java/com/example/ordersystem/service/OrderServiceTest.java b/order-system/src/test/java/com/example/ordersystem/service/OrderServiceTest.java
+new file mode 100644
+index 0000000000..389cb3a08c
+--- /dev/null
++++ b/order-system/src/test/java/com/example/ordersystem/service/OrderServiceTest.java
+@@ -0,0 +1,87 @@
++package com.example.ordersystem.service;
++
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.entity.OrderStatus;
++import com.example.ordersystem.repository.OrderRepository;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Nested;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.InjectMocks;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.Optional;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.any;
++import static org.mockito.Mockito.*;
++
++@ExtendWith(MockitoExtension.class)
++class OrderServiceTest {
++
++    @Mock
++    private OrderRepository orderRepository;
++
++    @Mock
++    private OrderTimeoutService orderTimeoutService;
++
++    @InjectMocks
++    private OrderService orderService;
++
++    @Nested
++    @DisplayName("createOrder")
++    class CreateOrderTests {
++
++        @Test
++        @DisplayName("Should create order with timeout calculated from OrderTimeoutService")
++        void shouldCreateOrderWithTimeout() {
++            LocalDateTime timeoutAt = LocalDateTime.now().plusMinutes(30);
++            when(orderTimeoutService.calculateTimeoutAt()).thenReturn(timeoutAt);
++            when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
++                Order order = invocation.getArgument(0);
++                order.setId(1L);
++                return order;
++            });
++
++            Order result = orderService.createOrder("user-001", new BigDecimal("199.99"));
++
++            assertNotNull(result);
++            assertEquals("user-001", result.getUserId());
++            assertEquals(new BigDecimal("199.99"), result.getAmount());
++            assertEquals(OrderStatus.PENDING, result.getStatus());
++            assertEquals(timeoutAt, result.getTimeoutAt());
++            verify(orderRepository).save(any(Order.class));
++        }
++    }
++
++    @Nested
++    @DisplayName("getOrderByOrderNo")
++    class GetOrderTests {
++
++        @Test
++        @DisplayName("Should return order when found")
++        void shouldReturnOrderWhenFound() {
++            Order order = Order.create("ORD-001", "user-001", new BigDecimal("99.99"),
++                    LocalDateTime.now().plusMinutes(30));
++            order.setId(1L);
++            when(orderRepository.findByOrderNo("ORD-001")).thenReturn(Optional.of(order));
++
++            Order result = orderService.getOrderByOrderNo("ORD-001");
++
++            assertNotNull(result);
++            assertEquals("ORD-001", result.getOrderNo());
++        }
++
++        @Test
++        @DisplayName("Should throw when order not found")
++        void shouldThrowWhenNotFound() {
++            when(orderRepository.findByOrderNo("NOT-EXIST")).thenReturn(Optional.empty());
++
++            assertThrows(IllegalArgumentException.class,
++                    () -> orderService.getOrderByOrderNo("NOT-EXIST"));
++        }
++    }
++}
+diff --git a/order-system/src/test/java/com/example/ordersystem/service/OrderTimeoutServiceTest.java b/order-system/src/test/java/com/example/ordersystem/service/OrderTimeoutServiceTest.java
+new file mode 100644
+index 0000000000..d53eb34f6d
+--- /dev/null
++++ b/order-system/src/test/java/com/example/ordersystem/service/OrderTimeoutServiceTest.java
+@@ -0,0 +1,240 @@
++package com.example.ordersystem.service;
++
++import com.example.ordersystem.config.OrderTimeoutProperties;
++import com.example.ordersystem.entity.Order;
++import com.example.ordersystem.entity.OrderStatus;
++import com.example.ordersystem.repository.OrderRepository;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.DisplayName;
++import org.junit.jupiter.api.Nested;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.extension.ExtendWith;
++import org.mockito.ArgumentCaptor;
++import org.mockito.InjectMocks;
++import org.mockito.Mock;
++import org.mockito.junit.jupiter.MockitoExtension;
++import org.springframework.data.domain.Pageable;
++import org.springframework.orm.ObjectOptimisticLockingFailureException;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.Collections;
++import java.util.List;
++import java.util.Optional;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.ArgumentMatchers.*;
++import static org.mockito.Mockito.*;
++
++@ExtendWith(MockitoExtension.class)
++class OrderTimeoutServiceTest {
++
++    @Mock
++    private OrderRepository orderRepository;
++
++    @Mock
++    private OrderTimeoutProperties properties;
++
++    @InjectMocks
++    private OrderTimeoutService orderTimeoutService;
++
++    private Order buildTimeoutOrder(Long id, String orderNo, int retryCount) {
++        Order order = Order.create(orderNo, "user-001", new BigDecimal("99.99"),
++                LocalDateTime.now().minusMinutes(31));
++        order.setId(id);
++        order.setRetryCount(retryCount);
++        order.setVersion(1L);
++        return order;
++    }
++
++    private Order buildActiveOrder(Long id, String orderNo) {
++        Order order = Order.create(orderNo, "user-001", new BigDecimal("99.99"),
++                LocalDateTime.now().plusMinutes(30));
++        order.setId(id);
++        order.setVersion(1L);
++        return order;
++    }
++
++    @Nested
++    @DisplayName("scanAndCancelTimeoutOrders")
++    class ScanAndCancelTests {
++
++        @Test
++        @DisplayName("Should cancel timeout PENDING orders")
++        void shouldCancelTimeoutOrders() {
++            Order timeoutOrder = buildTimeoutOrder(1L, "ORD-001", 0);
++            when(properties.getMaxRetry()).thenReturn(3);
++            when(properties.getBatchSize()).thenReturn(100);
++            when(orderRepository.findTimeoutOrdersWithRetryCapacity(
++                    eq(OrderStatus.PENDING), any(LocalDateTime.class), eq(3), any(Pageable.class)))
++                    .thenReturn(List.of(timeoutOrder));
++            when(orderRepository.findById(1L)).thenReturn(Optional.of(timeoutOrder));
++            when(orderRepository.cancelOrderWithOptimisticLock(
++                    eq(1L), eq(OrderStatus.PENDING), eq(OrderStatus.TIMEOUT_CANCELLED),
++                    anyString(), eq(1L)))
++                    .thenReturn(1);
++
++            orderTimeoutService.scanAndCancelTimeoutOrders();
++
++            verify(orderRepository).cancelOrderWithOptimisticLock(
++                    eq(1L), eq(OrderStatus.PENDING), eq(OrderStatus.TIMEOUT_CANCELLED),
++                    anyString(), eq(1L));
++        }
++
++        @Test
++        @DisplayName("Should skip when no timeout orders found")
++        void shouldSkipWhenNoTimeoutOrders() {
++            when(properties.getMaxRetry()).thenReturn(3);
++            when(properties.getBatchSize()).thenReturn(100);
++            when(orderRepository.findTimeoutOrdersWithRetryCapacity(
++                    eq(OrderStatus.PENDING), any(LocalDateTime.class), eq(3), any(Pageable.class)))
++                    .thenReturn(Collections.emptyList());
++
++            orderTimeoutService.scanAndCancelTimeoutOrders();
++
++            verify(orderRepository, never()).cancelOrderWithOptimisticLock(
++                    anyLong(), any(), any(), anyString(), anyLong());
++        }
++
++        @Test
++        @DisplayName("Should handle optimistic lock conflict gracefully")
++        void shouldHandleOptimisticLockConflict() {
++            Order timeoutOrder = buildTimeoutOrder(1L, "ORD-001", 0);
++            when(properties.getMaxRetry()).thenReturn(3);
++            when(properties.getBatchSize()).thenReturn(100);
++            when(orderRepository.findTimeoutOrdersWithRetryCapacity(
++                    eq(OrderStatus.PENDING), any(LocalDateTime.class), eq(3), any(Pageable.class)))
++                    .thenReturn(List.of(timeoutOrder));
++            when(orderRepository.findById(1L)).thenReturn(Optional.of(timeoutOrder));
++            when(orderRepository.cancelOrderWithOptimisticLock(
++                    anyLong(), any(), any(), anyString(), anyLong()))
++                    .thenReturn(0);
++
++            orderTimeoutService.scanAndCancelTimeoutOrders();
++
++            verify(orderRepository).save(any(Order.class));
++        }
++    }
++
++    @Nested
++    @DisplayName("cancelOrderWithIdempotency")
++    class IdempotencyTests {
++
++        @Test
++        @DisplayName("Should return true when order already cancelled (idempotent)")
++        void shouldBeIdempotentWhenAlreadyCancelled() {
++            Order cancelledOrder = buildTimeoutOrder(1L, "ORD-001", 0);
++            cancelledOrder.setStatus(OrderStatus.TIMEOUT_CANCELLED);
++
++            when(orderRepository.findById(1L)).thenReturn(Optional.of(cancelledOrder));
++
++            boolean result = orderTimeoutService.cancelOrderWithIdempotency(cancelledOrder);
++
++            assertTrue(result);
++            verify(orderRepository, never()).cancelOrderWithOptimisticLock(
++                    anyLong(), any(), any(), anyString(), anyLong());
++        }
++
++        @Test
++        @DisplayName("Should return true when order already confirmed (idempotent)")
++        void shouldBeIdempotentWhenAlreadyConfirmed() {
++            Order confirmedOrder = buildActiveOrder(1L, "ORD-001");
++            confirmedOrder.setStatus(OrderStatus.CONFIRMED);
++
++            when(orderRepository.findById(1L)).thenReturn(Optional.of(confirmedOrder));
++
++            boolean result = orderTimeoutService.cancelOrderWithIdempotency(confirmedOrder);
++
++            assertTrue(result);
++            verify(orderRepository, never()).cancelOrderWithOptimisticLock(
++                    anyLong(), any(), any(), anyString(), anyLong());
++        }
++
++        @Test
++        @DisplayName("Should return false when order not found")
++        void shouldReturnFalseWhenOrderNotFound() {
++            Order order = buildTimeoutOrder(999L, "ORD-999", 0);
++            when(orderRepository.findById(999L)).thenReturn(Optional.empty());
++
++            boolean result = orderTimeoutService.cancelOrderWithIdempotency(order);
++
++            assertFalse(result);
++        }
++
++        @Test
++        @DisplayName("Should successfully cancel PENDING order")
++        void shouldCancelPendingOrder() {
++            Order pendingOrder = buildTimeoutOrder(1L, "ORD-001", 0);
++
++            when(orderRepository.findById(1L)).thenReturn(Optional.of(pendingOrder));
++            when(orderRepository.cancelOrderWithOptimisticLock(
++                    eq(1L), eq(OrderStatus.PENDING), eq(OrderStatus.TIMEOUT_CANCELLED),
++                    anyString(), eq(1L)))
++                    .thenReturn(1);
++
++            boolean result = orderTimeoutService.cancelOrderWithIdempotency(pendingOrder);
++
++            assertTrue(result);
++        }
++    }
++
++    @Nested
++    @DisplayName("Retry mechanism")
++    class RetryTests {
++
++        @Test
++        @DisplayName("Should increment retry count on failure")
++        void shouldIncrementRetryCountOnFailure() {
++            Order timeoutOrder = buildTimeoutOrder(1L, "ORD-001", 0);
++            when(properties.getMaxRetry()).thenReturn(3);
++            when(properties.getBatchSize()).thenReturn(100);
++            when(orderRepository.findTimeoutOrdersWithRetryCapacity(
++                    eq(OrderStatus.PENDING), any(LocalDateTime.class), eq(3), any(Pageable.class)))
++                    .thenReturn(List.of(timeoutOrder));
++            when(orderRepository.findById(1L))
++                    .thenReturn(Optional.of(timeoutOrder))
++                    .thenReturn(Optional.of(timeoutOrder));
++            when(orderRepository.cancelOrderWithOptimisticLock(
++                    anyLong(), any(), any(), anyString(), anyLong()))
++                    .thenThrow(new ObjectOptimisticLockingFailureException(Order.class, 1L));
++
++            orderTimeoutService.scanAndCancelTimeoutOrders();
++
++            verify(orderRepository).save(any(Order.class));
++        }
++
++        @Test
++        @DisplayName("Should skip orders exceeding max retry count")
++        void shouldSkipOrdersExceedingMaxRetry() {
++            when(properties.getMaxRetry()).thenReturn(3);
++            when(properties.getBatchSize()).thenReturn(100);
++            Order exceededOrder = buildTimeoutOrder(1L, "ORD-001", 4);
++
++            when(orderRepository.findTimeoutOrdersWithRetryCapacity(
++                    eq(OrderStatus.PENDING), any(LocalDateTime.class), eq(3), any(Pageable.class)))
++                    .thenReturn(Collections.emptyList());
++
++            orderTimeoutService.scanAndCancelTimeoutOrders();
++
++            verify(orderRepository, never()).cancelOrderWithOptimisticLock(
++                    anyLong(), any(), any(), anyString(), anyLong());
++        }
++    }
++
++    @Nested
++    @DisplayName("calculateTimeoutAt")
++    class CalculateTimeoutTests {
++
++        @Test
++        @DisplayName("Should calculate timeout based on configured minutes")
++        void shouldCalculateTimeout() {
++            when(properties.getMinutes()).thenReturn(30);
++
++            LocalDateTime timeoutAt = orderTimeoutService.calculateTimeoutAt();
++
++            assertNotNull(timeoutAt);
++            assertTrue(timeoutAt.isAfter(LocalDateTime.now().plusMinutes(29)));
++            assertTrue(timeoutAt.isBefore(LocalDateTime.now().plusMinutes(31)));
++        }
++    }
++}
+diff --git a/order-system/src/test/resources/application.yml b/order-system/src/test/resources/application.yml
+new file mode 100644
+index 0000000000..0947a30eef
+--- /dev/null
++++ b/order-system/src/test/resources/application.yml
+@@ -0,0 +1,14 @@
++spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
++spring.datasource.username=sa
++spring.datasource.password=
++spring.datasource.driver-class-name=org.h2.Driver
++
++spring.jpa.hibernate.ddl-auto=create-drop
++spring.jpa.show-sql=true
++
++spring.flyway.enabled=false
++
++order.timeout.minutes=30
++order.timeout.scan.cron=0 */1 * * * *
++order.timeout.batch-size=100
++order.timeout.max-retry=3

@@ -1,0 +1,16 @@
+spring.datasource.url=jdbc:postgresql://localhost:5432/order_system
+spring.datasource.username=postgres
+spring.datasource.password=postgres
+spring.datasource.driver-class-name=org.postgresql.Driver
+
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+
+spring.flyway.enabled=true
+spring.flyway.locations=classpath:db/migration
+
+order.timeout.minutes=30
+order.timeout.scan.cron=0 */1 * * * *
+order.timeout.batch-size=100
+order.timeout.max-retry=3

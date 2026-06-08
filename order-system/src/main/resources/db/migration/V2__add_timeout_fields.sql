@@ -1,0 +1,5 @@
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS timeout_at TIMESTAMP;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason VARCHAR(256);
+
+CREATE INDEX IF NOT EXISTS idx_orders_status_timeout ON orders (status, timeout_at);
